@@ -1,0 +1,21 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Dependencies / build output (none currently, kept for when they show up)
+node_modules/
+dist/
+build/
+*.log
+
+# Local secrets, if any ever get added
+.env
+.env.*
+
+# Claude Code session tooling metadata — not part of the extension
+.claude/
+
+# Design reference only, not loaded by the extension — contains figures not yet
+# confirmed safe to publish
+bd_dashboard_tableau_mockup_v2.html

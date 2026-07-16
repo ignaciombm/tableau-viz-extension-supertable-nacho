@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest manifest-version="0.1" xmlns="http://www.tableau.com/xml/extension_manifest">
+  <worksheet-extension id="com.fever.extensions.collapsiblegroupingtable" extension-version="1.0.0">
+    <default-locale>en_US</default-locale>
+    <name resource-id="name" />
+    <description>Collapsible pivot-style tree table with grouping hierarchy, subtotals/grand totals, column pinning, inline filters and sorting.</description>
+    <author name="Fever" email="data@feverup.com" organization="Fever" website="https://www.feverup.com" />
+    <min-api-version>1.11</min-api-version>
+    <source-location>
+      <url>http://localhost:8080/index.html</url>
+    </source-location>
+    <icon>iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAAOUlEQVRIS2NkoBAwUqifYVQBg4GBgeE/GRr+M2AJhP+MjIz/GRhIC0lGRsb/DAwMJIckIyPjfxKDkoEBALjWFcxG6d/2AAAAAElFTkSuQmCC</icon>
+    <permissions>
+      <permission>full data</permission>
+    </permissions>
+    <context-menu>
+      <configure-context-menu-item />
+    </context-menu>
+    <encoding id="hierarchy">
+      <display-name>Grouping hierarchy</display-name>
+      <fields max-count="20" />
+    </encoding>
+    <encoding id="details">
+      <display-name>Detail columns (not grouped)</display-name>
+      <fields max-count="20" />
+    </encoding>
+    <encoding id="measures">
+      <display-name>Measures</display-name>
+      <data-spec>
+        <data-type>numeric</data-type>
+      </data-spec>
+      <role-spec>
+        <role-type>continuous-measure</role-type>
+      </role-spec>
+      <fields max-count="20" />
+    </encoding>
+  </worksheet-extension>
+  <resources>
+    <resource id="name">
+      <text locale="en_US">Collapsible Grouping Table</text>
+    </resource>
+  </resources>
+</manifest>

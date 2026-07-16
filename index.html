@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collapsible Grouping Table</title>
+
+  <!-- Tableau Extensions API (self-hosted — the tableau.github.io CDN path returns 404) -->
+  <script src="lib/tableau.extensions.1.latest.js"></script>
+
+  <!-- Tabulator (tree data, sorting, header filters, column pinning/resizing/autosize all built in) -->
+  <link rel="stylesheet" href="lib/tabulator_simple.min.css" />
+  <script src="lib/tabulator.min.js"></script>
+
+  <!-- Small local stylesheet replacing the Tailwind CDN so the extension has no external
+       network dependency at all -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Discreet neutral grid theme, layered on top of Tabulator's blank "simple" theme -->
+  <link rel="stylesheet" href="grid-theme.css" />
+
+  <style>
+    #grid-table { flex: 1 1 auto; min-height: 0; }
+    #table-view { position: relative; }
+    #zoom-control {
+      position: absolute; right: 10px; bottom: 10px; z-index: 20;
+      display: flex; align-items: center; gap: 4px;
+      background: rgba(255,255,255,0.9); border: 1px solid #d1d5db; border-radius: 4px;
+      padding: 2px 4px; font-size: 11px; color: #555;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    #zoom-control button {
+      border: none; background: transparent; cursor: pointer; font-size: 13px; color: #555;
+      width: 18px; height: 18px; line-height: 1; border-radius: 3px;
+    }
+    #zoom-control button:hover { background: #f0f0f0; }
+    #zoom-level { min-width: 34px; text-align: center; }
+  </style>
+</head>
+<body class="h-full">
+
+  <!-- ============ EMPTY STATE (no fields dropped on the encodings yet) ============ -->
+  <div id="empty-view" class="h-full flex items-center justify-center p-6 text-center">
+    <div>
+      <p class="font-semibold mb-1">Drop fields to get started</p>
+      <p class="text-gray-500 text-xs">
+        Drag one or more measures onto the <b>Measures</b> shelf, plus at least one dimension onto
+        either <b>Grouping hierarchy</b> (to group rows) or <b>Detail columns</b> (to show it as a
+        plain, ungrouped column) on the Marks card. Use the <b>Format Extension</b> button on the
+        Marks card to set display names, inline filters and totals.
+      </p>
+      <p id="empty-error" class="text-red-500 text-xs mt-2 hidden"></p>
+    </div>
+  </div>
+
+  <!-- ============ TABLE VIEW (settings now live in the Format Extension dialog) ============ -->
+  <div id="table-view" class="hidden h-full flex flex-col">
+    <div id="grid-table" class="flex-1"></div>
+    <div id="zoom-control">
+      <button id="zoom-out-btn" title="Zoom out">−</button>
+      <span id="zoom-level">100%</span>
+      <button id="zoom-in-btn" title="Zoom in">+</button>
+    </div>
+  </div>
+
+  <script src="application.js"></script>
+</body>
+</html>

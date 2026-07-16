@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Collapsible Grouping Table — Settings</title>
+  <script src="lib/tableau.extensions.1.latest.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { padding: 16px; }
+    .format-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .order-list { display: flex; flex-direction: column; gap: 4px; }
+    .order-chip {
+      display: flex; align-items: center; gap: 8px;
+      border: 1px solid #d1d5db; border-radius: 4px; padding: 5px 8px;
+      background: #fff; cursor: grab;
+    }
+    .order-chip.dragging { opacity: 0.4; }
+    .order-chip .handle { color: #9a9ca3; }
+    .order-chip .name { flex: 1; }
+  </style>
+</head>
+<body>
+  <section>
+    <h2 class="font-semibold text-base mb-2">Group column</h2>
+    <input id="group-column-title" class="border rounded px-2 py-1 w-full" placeholder="Name for the group/hierarchy column" />
+    <div class="flex gap-2 mt-2 items-center">
+      <label class="flex items-center gap-1"><input type="checkbox" id="group-title-italic" /> Italic title</label>
+      <label class="flex items-center gap-1"><input type="checkbox" id="group-values-italic" /> Italic values</label>
+      <label class="flex items-center gap-1">Values color <input type="color" id="group-values-color" value="#000000" /></label>
+    </div>
+  </section>
+
+  <section class="mt-4">
+    <h2 class="font-semibold text-base mb-2">Fields — display name, filter &amp; format</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b text-gray-500">
+            <th class="py-1 pr-2">Field</th>
+            <th class="py-1 pr-2">Role</th>
+            <th class="py-1 pr-2">Display name (alias)</th>
+            <th class="py-1 pr-2">Filter</th>
+            <th class="py-1 pr-2">Format</th>
+          </tr>
+        </thead>
+        <tbody id="field-config-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mt-4">
+    <h2 class="font-semibold text-base mb-2">Column order &amp; visibility</h2>
+    <p class="text-xs text-gray-500 mb-2">Drag to reorder measures and detail columns freely. Uncheck to hide a column from the table.</p>
+    <div id="order-list" class="order-list"></div>
+  </section>
+
+  <section class="mt-4">
+    <h2 class="font-semibold text-base mb-2">Default expand level</h2>
+    <label class="flex items-center gap-2">
+      Expand the first
+      <input type="number" id="default-expand-level" min="0" max="10" class="border rounded px-2 py-1 w-14" />
+      hierarchy level(s) automatically (0 = fully collapsed)
+    </label>
+  </section>
+
+  <section class="mt-4">
+    <h2 class="font-semibold text-base mb-2">Totals &amp; subtotals</h2>
+    <div class="flex flex-col gap-2">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="grand-total-enabled" />
+        Show grand total
+        <select id="grand-total-position" class="border rounded px-1 py-0.5">
+          <option value="top">at top</option>
+          <option value="bottom" selected>at bottom</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="subtotal-enabled" />
+        Show group subtotals
+        <select id="subtotal-position" class="border rounded px-1 py-0.5">
+          <option value="top">at top of each group</option>
+          <option value="bottom" selected>at bottom of each group</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <div class="mt-4 flex gap-2">
+    <button id="autosize-btn" class="border px-2 py-1 rounded hover:bg-gray-100">↔ Autosize all columns</button>
+    <button id="cancel-btn" class="border px-2 py-1 rounded hover:bg-gray-100">Cancel</button>
+    <button id="save-btn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save</button>
+  </div>
+
+  <script src="settings-dialog.js"></script>
+</body>
+</html>
