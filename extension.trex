@@ -7,7 +7,7 @@
     <author name="Fever" email="data@feverup.com" organization="Fever" website="https://www.feverup.com" />
     <min-api-version>1.11</min-api-version>
     <source-location>
-      <url>http://localhost:8080/index.html</url>
+      <url>https://ignaciombm.github.io/tableau-viz-extension-supertable-nacho/index.html</url>
     </source-location>
     <icon>iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAAOUlEQVRIS2NkoBAwUqifYVQBg4GBgeE/GRr+M2AJhP+MjIz/GRhIC0lGRsb/DAwMJIckIyPjfxKDkoEBALjWFcxG6d/2AAAAAElFTkSuQmCC</icon>
     <permissions>
