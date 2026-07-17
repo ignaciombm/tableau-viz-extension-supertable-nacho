@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <title>Collapsible Grouping Table — Settings</title>
   <script src="lib/tableau.extensions.1.latest.js"></script>
-  <link rel="stylesheet" href="styles.css" />
+  <!-- ?v= cache-buster — bump this (and the matching value in index.html) on every deploy so a
+       stale cached copy can't linger; EXTENSION_BUILD below is the human-visible confirmation
+       that a given deploy actually reached this dialog. -->
+  <link rel="stylesheet" href="styles.css?v=1" />
   <style>
     body { padding: 16px; }
     .format-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -20,6 +23,8 @@
   </style>
 </head>
 <body>
+  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: v1</div>
+
   <section>
     <h2 class="font-semibold text-base mb-2">Group column</h2>
     <input id="group-column-title" class="border rounded px-2 py-1 w-full" placeholder="Name for the group/hierarchy column" />
@@ -104,6 +109,6 @@
     <button id="save-btn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save</button>
   </div>
 
-  <script src="settings-dialog.js"></script>
+  <script src="settings-dialog.js?v=1"></script>
 </body>
 </html>
