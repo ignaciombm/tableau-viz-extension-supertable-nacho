@@ -516,7 +516,10 @@ function reapplyPinnedRowPositions() {
       const grandRow = rootRows.find((r) => r.getData()._isGrandTotal);
       const target = state.totals.grandTotal.position === 'top' ? rootRows[0] : rootRows[rootRows.length - 1];
       if (grandRow && target && target !== grandRow) {
-        grandRow.move(target, state.totals.grandTotal.position === 'top');
+        // Row.move(target, insertAfter) — 'top' must land BEFORE the current first row (false),
+        // 'bottom' must land AFTER the current last row (true). This was inverted before, which
+        // nudged the pinned row one slot off the true edge on every single re-sort.
+        grandRow.move(target, state.totals.grandTotal.position === 'bottom');
       }
     }
     if (state.totals.subtotal.enabled) {
@@ -527,7 +530,7 @@ function reapplyPinnedRowPositions() {
           const subtotalRow = children.find((c) => c.getData()._isSubtotal);
           const target = state.totals.subtotal.position === 'top' ? children[0] : children[children.length - 1];
           if (subtotalRow && target && target !== subtotalRow) {
-            subtotalRow.move(target, state.totals.subtotal.position === 'top');
+            subtotalRow.move(target, state.totals.subtotal.position === 'bottom');
           }
           repositionWithin(children);
         });
@@ -778,13 +781,17 @@ function rebuildTable() {
       persistSettings();
     },
     // Re-pins subtotal/grand-total rows after every sort — the initial one above and any
-    // interactive header-click sort — see reapplyPinnedRowPositions().
-    tableBuilt: () => reapplyPinnedRowPositions(),
+    // interactive header-click sort — see reapplyPinnedRowPositions(). Header-rename and
+    // filter-toggle attachment also has to wait for this event: table construction is
+    // asynchronous, so calling col.getElement() right after `new Tabulator(...)` returns can hit
+    // a DOM that isn't there yet, silently no-op'ing the button/handler attachment.
+    tableBuilt: () => {
+      reapplyPinnedRowPositions();
+      attachHeaderRenameHandlers();
+      attachFilterToggleButtons();
+    },
     dataSorted: () => reapplyPinnedRowPositions(),
   });
-
-  attachHeaderRenameHandlers();
-  attachFilterToggleButtons();
 }
 
 /** Double-click any header (group column or measure) to rename it directly in the grid,
