@@ -22,11 +22,9 @@
 }
 
 .tabulator .tabulator-col-title {
-  color: #6b6d76;
+  color: #000;
   font-weight: 700;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 11px;
 }
 
 .tabulator .tabulator-header-filter input {
@@ -46,12 +44,20 @@
 .tabulator .tabulator-col.filter-open .tabulator-header-filter {
   display: block;
 }
+/* .tabulator-col-title has overflow:hidden + width:100%, so a plain appended sibling gets
+   squeezed out of the visible area instead of actually showing — position it absolutely
+   within the (already position:relative) title holder instead, just left of the sort arrow
+   (which sits at right:4px) so the two don't overlap. */
 .filter-toggle-btn {
-  display: inline-block;
-  margin-left: 4px;
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  transform: translateY(-50%);
+  z-index: 2;
   cursor: pointer;
   font-size: 10px;
   opacity: 0.55;
+  background: inherit;
 }
 .filter-toggle-btn:hover {
   opacity: 0.9;

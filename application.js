@@ -464,6 +464,40 @@ function labelMatchesDeep(rowData, searchTerm) {
   return (rowData._children || []).some((child) => labelMatchesDeep(child, searchTerm));
 }
 
+/** Ascending comparator that works for both the string-valued tree/detail columns and the
+ *  numeric measure columns without needing to know which kind a field is. */
+function smartCompare(av, bv) {
+  if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+  return (av ?? '').toString().localeCompare((bv ?? '').toString());
+}
+
+/**
+ * Sorts a row-object array (root-level rows, or a group's `_children`) by `sortField`/`dir`,
+ * recursing into every nested `_children` array — while pulling the subtotal/grand-total row
+ * (if present) out before sorting and re-inserting it at its configured top/bottom position
+ * afterward, so it never gets shuffled in among the rows it's summarizing. Run once up front
+ * on the data handed to Tabulator, rather than via Tabulator's own initialSort (see
+ * reapplyPinnedRowPositions for why that wasn't reliable enough to build on).
+ */
+function sortRowsPreservingPins(rows, sortField, dir, isRoot) {
+  const pinnedIndex = rows.findIndex((r) => (isRoot ? r._isGrandTotal : r._isSubtotal));
+  const pinnedRow = pinnedIndex >= 0 ? rows[pinnedIndex] : null;
+  const normalRows = pinnedIndex >= 0 ? rows.filter((_, i) => i !== pinnedIndex) : rows.slice();
+
+  normalRows.sort((a, b) => {
+    const result = smartCompare(a[sortField], b[sortField]);
+    return dir === 'desc' ? -result : result;
+  });
+
+  normalRows.forEach((r) => {
+    if (r._children) r._children = sortRowsPreservingPins(r._children, sortField, dir, false);
+  });
+
+  if (!pinnedRow) return normalRows;
+  const position = isRoot ? state.totals.grandTotal.position : state.totals.subtotal.position;
+  return position === 'top' ? [pinnedRow, ...normalRows] : [...normalRows, pinnedRow];
+}
+
 /**
  * Forces subtotal/grand-total rows back to their configured top/bottom position after Tabulator
  * finishes any sort (the initial default sort or an interactive header click) — rather than
@@ -690,17 +724,21 @@ function rebuildTable() {
   const sortField = sortableFieldNames.has(state.defaultSortField)
     ? state.defaultSortField
     : (showTreeColumn ? '_label' : valueFields[0]?.name);
-  const initialSort = sortField ? [{ column: sortField, dir: state.defaultSortDir }] : [];
+  // Sorted here in plain JS rather than via Tabulator's `initialSort` — that depends on when
+  // exactly Tabulator applies it relative to tableBuilt/dataSorted firing, which isn't something
+  // to build on (see reapplyPinnedRowPositions' comment). Doing it ourselves up front guarantees
+  // the very first render already has subtotal/grand-total rows pinned correctly; dataSorted
+  // still re-pins after any interactive header-click sort later.
+  const sortedRootData = sortField ? sortRowsPreservingPins(rootData, sortField, state.defaultSortDir, true) : rootData;
 
   state.table = new Tabulator('#grid-table', {
-    data: rootData,
+    data: sortedRootData,
     layout: 'fitDataFill',
     height: '100%',
     dataTree: true,
     dataTreeChildField: '_children',
     dataTreeStartExpanded: startExpanded,
     columns: columnDefs,
-    initialSort,
     placeholder: 'No data',
     movableColumns: true, // drag a header to reorder columns directly in the grid
     // Tags each row with a depth/role class (see grid-theme.css) so group rows shade/bold
