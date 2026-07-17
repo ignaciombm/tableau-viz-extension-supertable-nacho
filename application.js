@@ -45,6 +45,9 @@ const state = {
   // displayed order drifts every time the extension reloads — this pins it down for good.
   defaultSortField: '_label',
   defaultSortDir: 'asc',
+  // When true, every configured inline filter shows permanently in a row below the headers
+  // (Tabulator's native header-filter markup) instead of behind a toggle icon.
+  filtersAlwaysVisible: true,
   // { [fieldName]: { alias, filter, visible, order, width, format } } — visible/order/width/
   // format apply to both measure and detail fields (hierarchy fields collapse into one tree
   // column, whose own width is tracked separately via groupColumnWidth above).
@@ -89,6 +92,7 @@ function loadSettings() {
   state.zoomLevel = Number.isFinite(saved.zoomLevel) ? saved.zoomLevel : 100;
   state.defaultSortField = saved.defaultSortField || '_label';
   state.defaultSortDir = saved.defaultSortDir === 'desc' ? 'desc' : 'asc';
+  if (saved.filtersAlwaysVisible !== undefined) state.filtersAlwaysVisible = !!saved.filtersAlwaysVisible;
 }
 
 function persistSettings() {
@@ -104,6 +108,7 @@ function persistSettings() {
     zoomLevel: state.zoomLevel,
     defaultSortField: state.defaultSortField,
     defaultSortDir: state.defaultSortDir,
+    filtersAlwaysVisible: state.filtersAlwaysVisible,
   }));
   return tableau.extensions.settings.saveAsync();
 }
@@ -244,7 +249,7 @@ async function getSummaryDataTable(worksheet) {
 function ensureFieldSettingsDefaults() {
   state.hierarchyFieldNames.forEach((name) => {
     if (!state.fieldSettings[name]) {
-      state.fieldSettings[name] = { alias: name, filter: false };
+      state.fieldSettings[name] = { alias: name, filter: true };
     }
   });
 
@@ -261,7 +266,7 @@ function ensureFieldSettingsDefaults() {
     if (!state.fieldSettings[name]) {
       state.fieldSettings[name] = {
         alias: name,
-        filter: false,
+        filter: true,
         visible: true,
         order: i,
         orderManuallySet: false,
@@ -349,6 +354,7 @@ function openConfigureDialog() {
     defaultExpandLevel: state.defaultExpandLevel,
     defaultSortField: state.defaultSortField,
     defaultSortDir: state.defaultSortDir,
+    filtersAlwaysVisible: state.filtersAlwaysVisible,
     hierarchyFieldNames: state.hierarchyFieldNames,
     measureFieldNames: state.measureFieldNames,
     detailFieldNames: state.detailFieldNames,
@@ -368,6 +374,7 @@ function openConfigureDialog() {
       state.defaultExpandLevel = Number.isInteger(result.defaultExpandLevel) ? result.defaultExpandLevel : 0;
       state.defaultSortField = result.defaultSortField || '_label';
       state.defaultSortDir = result.defaultSortDir === 'desc' ? 'desc' : 'asc';
+      state.filtersAlwaysVisible = result.filtersAlwaysVisible !== false;
       await persistSettings();
       rebuildTable();
 
@@ -475,9 +482,10 @@ function smartCompare(av, bv) {
  * Sorts a row-object array (root-level rows, or a group's `_children`) by `sortField`/`dir`,
  * recursing into every nested `_children` array — while pulling the subtotal/grand-total row
  * (if present) out before sorting and re-inserting it at its configured top/bottom position
- * afterward, so it never gets shuffled in among the rows it's summarizing. Run once up front
- * on the data handed to Tabulator, rather than via Tabulator's own initialSort (see
- * reapplyPinnedRowPositions for why that wasn't reliable enough to build on).
+ * afterward, so it never gets shuffled in among the rows it's summarizing. This is the ONLY
+ * function that ever decides row order — both the initial render and every interactive
+ * header-click sort (see handleInteractiveSort) route through it, rather than letting Tabulator's
+ * own sort run and trying to patch up its result afterward.
  */
 function sortRowsPreservingPins(rows, sortField, dir, isRoot) {
   const pinnedIndex = rows.findIndex((r) => (isRoot ? r._isGrandTotal : r._isSubtotal));
@@ -499,47 +507,40 @@ function sortRowsPreservingPins(rows, sortField, dir, isRoot) {
 }
 
 /**
- * Forces subtotal/grand-total rows back to their configured top/bottom position after Tabulator
- * finishes any sort (the initial default sort or an interactive header click) — rather than
- * trying to make the column's own sorter function pin them, which turned out to depend on
- * exactly how Tabulator applies its asc/desc flip internally (undocumented for custom sorter
- * functions, and not something worth building on). This runs after the fact instead: let
- * Tabulator sort however it wants, then physically move the pinned rows using its row-move API.
+ * Keeping subtotal/grand-total rows pinned by letting Tabulator apply its own sort and then
+ * physically moving the pinned rows afterward (via row.move()) turned out to be unreliable in
+ * practice across repeated attempts — it depends on exactly how Tabulator's own sort direction
+ * gets applied internally, which isn't something to build reliable behavior on top of.
+ *
+ * Instead, Tabulator's header click is used purely as an input signal ("the user wants column X
+ * sorted direction Y") — sortRowsPreservingPins() (the same function that already produces a
+ * correctly pinned FIRST render, below) is the only code that ever decides row order. Every
+ * interactive header click just updates state.defaultSortField/Dir and triggers a full
+ * rebuildTable(), which re-derives the tree from state.lastFlatRows and re-sorts it the same
+ * trusted way every time — so there is exactly one sorting code path instead of two that can
+ * disagree with each other.
  */
-let repositioningPinnedRows = false;
-function reapplyPinnedRowPositions() {
-  if (!state.table || repositioningPinnedRows) return;
-  repositioningPinnedRows = true;
-  try {
-    if (state.totals.grandTotal.enabled) {
-      const rootRows = state.table.getRows();
-      const grandRow = rootRows.find((r) => r.getData()._isGrandTotal);
-      const target = state.totals.grandTotal.position === 'top' ? rootRows[0] : rootRows[rootRows.length - 1];
-      if (grandRow && target && target !== grandRow) {
-        // Row.move(target, insertAfter) — 'top' must land BEFORE the current first row (false),
-        // 'bottom' must land AFTER the current last row (true). This was inverted before, which
-        // nudged the pinned row one slot off the true edge on every single re-sort.
-        grandRow.move(target, state.totals.grandTotal.position === 'bottom');
-      }
-    }
-    if (state.totals.subtotal.enabled) {
-      const repositionWithin = (rows) => {
-        rows.forEach((row) => {
-          const children = row.getTreeChildren ? row.getTreeChildren() : [];
-          if (children.length === 0) return;
-          const subtotalRow = children.find((c) => c.getData()._isSubtotal);
-          const target = state.totals.subtotal.position === 'top' ? children[0] : children[children.length - 1];
-          if (subtotalRow && target && target !== subtotalRow) {
-            subtotalRow.move(target, state.totals.subtotal.position === 'bottom');
-          }
-          repositionWithin(children);
-        });
-      };
-      repositionWithin(state.table.getRows());
-    }
-  } finally {
-    repositioningPinnedRows = false;
-  }
+let handlingInteractiveSort = false;
+function handleInteractiveSort(sorters) {
+  if (handlingInteractiveSort) return;
+  const sorter = sorters && sorters[0];
+  if (!sorter) return;
+  // Always rebuilds, even if sorter.field/dir already match state.defaultSortField/Dir — e.g. the
+  // very first click on a column that happens to match the persisted default: Tabulator's own
+  // sort has already run once (ignoring pinning) by the time this fires, so skipping the rebuild
+  // here just because the field/dir "looks unchanged" would leave that wrong pass on screen.
+
+  state.defaultSortField = sorter.field;
+  state.defaultSortDir = sorter.dir;
+  persistSettings();
+  handlingInteractiveSort = true;
+  // Deferred: this fires from inside Tabulator's own dataSorted dispatch, which is still
+  // mid-way through applying its (unpinned) sort — tearing the table down synchronously here
+  // would do that while Tabulator is still on the call stack that triggered it.
+  setTimeout(() => {
+    handlingInteractiveSort = false;
+    rebuildTable();
+  }, 0);
 }
 
 function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupColumnTitleItalic, groupColumnValuesItalic, groupColumnValuesColor, showTreeColumn, groupColumnWidth) {
@@ -727,12 +728,15 @@ function rebuildTable() {
   const sortField = sortableFieldNames.has(state.defaultSortField)
     ? state.defaultSortField
     : (showTreeColumn ? '_label' : valueFields[0]?.name);
-  // Sorted here in plain JS rather than via Tabulator's `initialSort` — that depends on when
-  // exactly Tabulator applies it relative to tableBuilt/dataSorted firing, which isn't something
-  // to build on (see reapplyPinnedRowPositions' comment). Doing it ourselves up front guarantees
-  // the very first render already has subtotal/grand-total rows pinned correctly; dataSorted
-  // still re-pins after any interactive header-click sort later.
+  // Sorted here in plain JS, and re-run through this exact same function on every subsequent
+  // interactive header-click sort too (see handleInteractiveSort) — a single trusted sorting code
+  // path, rather than letting Tabulator's own sort run and trying to patch up its result after.
   const sortedRootData = sortField ? sortRowsPreservingPins(rootData, sortField, state.defaultSortDir, true) : rootData;
+
+  // "Always visible filters" (Format Extension > Fields) shows every configured filter input
+  // permanently in a row below the headers via Tabulator's own native header-filter markup — see
+  // the .filters-always-visible rule in grid-theme.css — instead of the toggle-icon approach.
+  document.getElementById('grid-table').classList.toggle('filters-always-visible', state.filtersAlwaysVisible);
 
   state.table = new Tabulator('#grid-table', {
     data: sortedRootData,
@@ -780,17 +784,18 @@ function rebuildTable() {
       else if (state.fieldSettings[field]) state.fieldSettings[field].width = width;
       persistSettings();
     },
-    // Re-pins subtotal/grand-total rows after every sort — the initial one above and any
-    // interactive header-click sort — see reapplyPinnedRowPositions(). Header-rename and
-    // filter-toggle attachment also has to wait for this event: table construction is
-    // asynchronous, so calling col.getElement() right after `new Tabulator(...)` returns can hit
-    // a DOM that isn't there yet, silently no-op'ing the button/handler attachment.
+    // Header-rename and filter-toggle attachment have to wait for this event: table construction
+    // is asynchronous, so calling col.getElement() right after `new Tabulator(...)` returns can
+    // hit a DOM that isn't there yet, silently no-op'ing the button/handler attachment.
     tableBuilt: () => {
-      reapplyPinnedRowPositions();
+      document.getElementById('grid-table').classList.toggle('filters-always-visible', state.filtersAlwaysVisible);
       attachHeaderRenameHandlers();
-      attachFilterToggleButtons();
+      if (!state.filtersAlwaysVisible) attachFilterToggleButtons();
     },
-    dataSorted: () => reapplyPinnedRowPositions(),
+    // Every interactive header-click sort is re-routed through handleInteractiveSort, which
+    // rebuilds the table via the exact same sortRowsPreservingPins() call used for the initial
+    // render, instead of trying to patch up Tabulator's own sort result afterward.
+    dataSorted: (sorters) => handleInteractiveSort(sorters),
   });
 }
 

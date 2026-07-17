@@ -22,10 +22,23 @@ tableau.extensions.initializeDialogAsync().then((openPayloadStr) => {
   document.getElementById('group-values-italic').checked = !!payload.groupColumnValuesItalic;
   document.getElementById('group-values-color').value = payload.groupColumnValuesColor || '#000000';
   document.getElementById('default-expand-level').value = Number.isInteger(payload.defaultExpandLevel) ? payload.defaultExpandLevel : 0;
+  document.getElementById('filters-always-visible').checked = payload.filtersAlwaysVisible !== false;
   renderFieldRows();
   renderOrderList();
   renderSortOptions();
   renderTotals();
+});
+
+// Turning this on is meant to guarantee every field actually has a visible filter (the whole
+// point of the fallback) — so it also checks every per-field Filter checkbox below, rather than
+// requiring the user to click each one individually. Turning it back off leaves per-field
+// choices alone (it only ever adds filters, never silently removes one a user asked for).
+document.getElementById('filters-always-visible').addEventListener('change', (e) => {
+  if (!e.target.checked) return;
+  document.querySelectorAll('.filter-checkbox').forEach((el) => {
+    el.checked = true;
+    ensureSetting(el.dataset.field).filter = true;
+  });
 });
 
 // ============================================================================
@@ -77,7 +90,7 @@ function renderFieldRows() {
   ];
 
   rows.forEach(({ name, role }) => {
-    const setting = payload.fieldSettings[name] || { alias: name, filter: false };
+    const setting = payload.fieldSettings[name] || { alias: name, filter: true };
     const tr = document.createElement('tr');
     tr.className = 'border-b';
     const formatCell = role !== 'Hierarchy' ? formatControlsHtml(name, setting.format) : '<span class="text-gray-500">—</span>';
@@ -134,7 +147,7 @@ function formatControlsHtml(name, format) {
 }
 
 function ensureSetting(name) {
-  if (!payload.fieldSettings[name]) payload.fieldSettings[name] = { alias: name, filter: false };
+  if (!payload.fieldSettings[name]) payload.fieldSettings[name] = { alias: name, filter: true };
   return payload.fieldSettings[name];
 }
 
@@ -220,6 +233,7 @@ function collectFormValues() {
   payload.defaultExpandLevel = parseInt(document.getElementById('default-expand-level').value, 10) || 0;
   payload.defaultSortField = document.getElementById('default-sort-field').value;
   payload.defaultSortDir = document.getElementById('default-sort-dir').value;
+  payload.filtersAlwaysVisible = document.getElementById('filters-always-visible').checked;
 
   document.querySelectorAll('.alias-input').forEach((el) => { ensureSetting(el.dataset.field).alias = el.value; });
   document.querySelectorAll('.filter-checkbox').forEach((el) => { ensureSetting(el.dataset.field).filter = el.checked; });

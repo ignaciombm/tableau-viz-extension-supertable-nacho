@@ -44,6 +44,13 @@
 .tabulator .tabulator-col.filter-open .tabulator-header-filter {
   display: block;
 }
+/* "Always show inline filters" (Format Extension > Fields) shows every configured filter
+   permanently in a row below the headers, via Tabulator's own header-filter markup — no icon,
+   no toggle. Higher specificity than the display:none rule above so it wins regardless of
+   stylesheet order. */
+.tabulator.filters-always-visible .tabulator-header-filter {
+  display: block;
+}
 /* .tabulator-col-title has overflow:hidden + width:100%, so a plain appended sibling gets
    squeezed out of the visible area instead of actually showing — position it absolutely
    within the (already position:relative) title holder instead, just left of the sort arrow
