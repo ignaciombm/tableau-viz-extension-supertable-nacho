@@ -464,43 +464,45 @@ function labelMatchesDeep(rowData, searchTerm) {
   return (rowData._children || []).some((child) => labelMatchesDeep(child, searchTerm));
 }
 
-/** -1/1 if `data` is a subtotal/grand-total row that should be pinned to the top/bottom of its
- *  siblings, 0 for a normal row. Grand-total rows only ever have top-level groups as siblings,
- *  and subtotal rows only ever have their own group's children as siblings, so a single rank
- *  function correctly pins each at whichever tree level it actually occurs. */
-function pinnedRowRank(data) {
-  if (data._isGrandTotal) return state.totals.grandTotal.position === 'top' ? -1 : 1;
-  if (data._isSubtotal) return state.totals.subtotal.position === 'top' ? -1 : 1;
-  return 0;
-}
-
-const stringBaseSorter = (a, b) => (a ?? '').toString().localeCompare((b ?? '').toString());
-const numberBaseSorter = (a, b) => {
-  const na = Number(a);
-  const nb = Number(b);
-  if (Number.isNaN(na) && Number.isNaN(nb)) return 0;
-  if (Number.isNaN(na)) return -1;
-  if (Number.isNaN(nb)) return 1;
-  return na - nb;
-};
-
-/** Wraps a plain ascending comparator so subtotal/grand-total rows always sort to their
- *  configured top/bottom position, regardless of which column is sorted or which direction —
- *  without this, Tabulator sorts those rows' own label/value like any other row (e.g. "Grand
- *  Total" landing wherever "G" falls alphabetically instead of staying pinned). Tabulator applies
- *  the asc/desc flip on top of whatever the sorter returns, so pinned rows counter-flip by `dir`
- *  to cancel that out and stay visually fixed; normal rows fall through to the base comparator
- *  and let Tabulator's own flip handle their direction as usual. */
-function withPinnedTotals(baseSorter) {
-  return (a, b, aRow, bRow, column, dir) => {
-    const aRank = pinnedRowRank(aRow.getData());
-    const bRank = pinnedRowRank(bRow.getData());
-    if (aRank !== bRank) {
-      const flip = dir === 'desc' ? -1 : 1;
-      return (aRank - bRank) * flip;
+/**
+ * Forces subtotal/grand-total rows back to their configured top/bottom position after Tabulator
+ * finishes any sort (the initial default sort or an interactive header click) — rather than
+ * trying to make the column's own sorter function pin them, which turned out to depend on
+ * exactly how Tabulator applies its asc/desc flip internally (undocumented for custom sorter
+ * functions, and not something worth building on). This runs after the fact instead: let
+ * Tabulator sort however it wants, then physically move the pinned rows using its row-move API.
+ */
+let repositioningPinnedRows = false;
+function reapplyPinnedRowPositions() {
+  if (!state.table || repositioningPinnedRows) return;
+  repositioningPinnedRows = true;
+  try {
+    if (state.totals.grandTotal.enabled) {
+      const rootRows = state.table.getRows();
+      const grandRow = rootRows.find((r) => r.getData()._isGrandTotal);
+      const target = state.totals.grandTotal.position === 'top' ? rootRows[0] : rootRows[rootRows.length - 1];
+      if (grandRow && target && target !== grandRow) {
+        grandRow.move(target, state.totals.grandTotal.position === 'top');
+      }
     }
-    return baseSorter(a, b);
-  };
+    if (state.totals.subtotal.enabled) {
+      const repositionWithin = (rows) => {
+        rows.forEach((row) => {
+          const children = row.getTreeChildren ? row.getTreeChildren() : [];
+          if (children.length === 0) return;
+          const subtotalRow = children.find((c) => c.getData()._isSubtotal);
+          const target = state.totals.subtotal.position === 'top' ? children[0] : children[children.length - 1];
+          if (subtotalRow && target && target !== subtotalRow) {
+            subtotalRow.move(target, state.totals.subtotal.position === 'top');
+          }
+          repositionWithin(children);
+        });
+      };
+      repositionWithin(state.table.getRows());
+    }
+  } finally {
+    repositioningPinnedRows = false;
+  }
 }
 
 function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupColumnTitleItalic, groupColumnValuesItalic, groupColumnValuesColor, showTreeColumn, groupColumnWidth) {
@@ -513,7 +515,7 @@ function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupCo
     field: '_label',
     frozen: true, // pinned to the left by default; user can unpin via the header context menu
     headerSort: true,
-    sorter: withPinnedTotals(stringBaseSorter),
+    sorter: 'string',
     resizable: true,
     // A persisted manual width overrides fitDataFill's auto-sizing for just this column;
     // omitted (undefined) lets it auto-fit as before until the user resizes it once.
@@ -552,7 +554,7 @@ function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupCo
   const valueColumns = valueFields.map((m) => ({
     title: m.format.titleItalic ? `<i>${m.alias}</i>` : m.alias,
     field: m.name,
-    sorter: withPinnedTotals(m.kind === 'measure' ? numberBaseSorter : stringBaseSorter),
+    sorter: m.kind === 'measure' ? 'number' : 'string',
     hozAlign: m.kind === 'measure' ? 'right' : 'left',
     resizable: true,
     ...(m.width ? { width: m.width } : {}),
@@ -580,6 +582,14 @@ const baseColumnContextMenu = [
   {
     label: (column) => (column.getDefinition().frozen ? 'Unpin column' : 'Pin column (freeze left)'),
     action: (e, column) => column.updateDefinition({ frozen: !column.getDefinition().frozen }),
+  },
+  {
+    label: 'Expand all groups',
+    action: () => { if (state.table) expandAllTreeRows(state.table.getRows()); },
+  },
+  {
+    label: 'Collapse all groups',
+    action: () => { if (state.table) collapseAllTreeRows(state.table.getRows()); },
   },
 ];
 
@@ -729,9 +739,14 @@ function rebuildTable() {
       else if (state.fieldSettings[field]) state.fieldSettings[field].width = width;
       persistSettings();
     },
+    // Re-pins subtotal/grand-total rows after every sort — the initial one above and any
+    // interactive header-click sort — see reapplyPinnedRowPositions().
+    tableBuilt: () => reapplyPinnedRowPositions(),
+    dataSorted: () => reapplyPinnedRowPositions(),
   });
 
   attachHeaderRenameHandlers();
+  attachFilterToggleButtons();
 }
 
 /** Double-click any header (group column or measure) to rename it directly in the grid,
@@ -758,12 +773,51 @@ function attachHeaderRenameHandlers() {
   });
 }
 
+/** Adds a small toggle icon next to the title of every column that has an inline filter
+ *  enabled, so the filter input stays hidden (see grid-theme.css) until the user asks for it —
+ *  rather than every configured filter always showing an input row, cluttering the header. */
+function attachFilterToggleButtons() {
+  state.table.getColumns().forEach((col) => {
+    const def = col.getDefinition();
+    if (!def.headerFilter) return;
+
+    const colEl = col.getElement();
+    const titleHolder = colEl.querySelector('.tabulator-col-title-holder') || colEl.querySelector('.tabulator-col-title');
+    if (!titleHolder || titleHolder.querySelector('.filter-toggle-btn')) return;
+
+    const btn = document.createElement('span');
+    btn.className = 'filter-toggle-btn';
+    btn.textContent = '🔍';
+    btn.title = 'Toggle inline filter';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = colEl.classList.toggle('filter-open');
+      btn.classList.toggle('active', open);
+      if (open) {
+        const input = colEl.querySelector('.tabulator-header-filter input');
+        if (input) input.focus();
+      }
+    });
+    titleHolder.appendChild(btn);
+  });
+}
+
 function expandAllTreeRows(rows) {
   rows.forEach((row) => {
     const children = row.getTreeChildren ? row.getTreeChildren() : [];
     if (children.length > 0) {
       row.treeExpand();
       expandAllTreeRows(children);
+    }
+  });
+}
+
+function collapseAllTreeRows(rows) {
+  rows.forEach((row) => {
+    const children = row.getTreeChildren ? row.getTreeChildren() : [];
+    if (children.length > 0) {
+      collapseAllTreeRows(children);
+      row.treeCollapse();
     }
   });
 }
