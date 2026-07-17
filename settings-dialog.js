@@ -24,8 +24,35 @@ tableau.extensions.initializeDialogAsync().then((openPayloadStr) => {
   document.getElementById('default-expand-level').value = Number.isInteger(payload.defaultExpandLevel) ? payload.defaultExpandLevel : 0;
   renderFieldRows();
   renderOrderList();
+  renderSortOptions();
   renderTotals();
 });
+
+// ============================================================================
+// Default sort — which column (and direction) the table sorts by every rebuild
+// ============================================================================
+
+function renderSortOptions() {
+  const select = document.getElementById('default-sort-field');
+  select.innerHTML = '';
+
+  if (payload.hierarchyFieldNames.length > 0) {
+    const opt = document.createElement('option');
+    opt.value = '_label';
+    opt.textContent = payload.groupColumnTitle || 'Group';
+    select.appendChild(opt);
+  }
+  [...payload.measureFieldNames, ...(payload.detailFieldNames || [])].forEach((name) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = payload.fieldSettings[name]?.alias || name;
+    select.appendChild(opt);
+  });
+
+  select.value = payload.defaultSortField || '_label';
+  if (select.selectedIndex === -1 && select.options.length > 0) select.selectedIndex = 0;
+  document.getElementById('default-sort-dir').value = payload.defaultSortDir === 'desc' ? 'desc' : 'asc';
+}
 
 function renderTotals() {
   document.getElementById('grand-total-enabled').checked = payload.totals.grandTotal.enabled;
@@ -191,6 +218,8 @@ function collectFormValues() {
   payload.groupColumnValuesItalic = document.getElementById('group-values-italic').checked;
   payload.groupColumnValuesColor = document.getElementById('group-values-color').value;
   payload.defaultExpandLevel = parseInt(document.getElementById('default-expand-level').value, 10) || 0;
+  payload.defaultSortField = document.getElementById('default-sort-field').value;
+  payload.defaultSortDir = document.getElementById('default-sort-dir').value;
 
   document.querySelectorAll('.alias-input').forEach((el) => { ensureSetting(el.dataset.field).alias = el.value; });
   document.querySelectorAll('.filter-checkbox').forEach((el) => { ensureSetting(el.dataset.field).filter = el.checked; });

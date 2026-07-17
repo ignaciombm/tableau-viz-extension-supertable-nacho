@@ -64,6 +64,19 @@
   </section>
 
   <section class="mt-4">
+    <h2 class="font-semibold text-base mb-2">Default sort</h2>
+    <p class="text-xs text-gray-500 mb-2">Tableau doesn't guarantee stable row order across sessions — this pins down a consistent default every time the table loads.</p>
+    <label class="flex items-center gap-2">
+      Sort by
+      <select id="default-sort-field" class="border rounded px-1 py-0.5"></select>
+      <select id="default-sort-dir" class="border rounded px-1 py-0.5">
+        <option value="asc">ascending</option>
+        <option value="desc">descending</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="mt-4">
     <h2 class="font-semibold text-base mb-2">Totals &amp; subtotals</h2>
     <div class="flex flex-col gap-2">
       <label class="flex items-center gap-2">

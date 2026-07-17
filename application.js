@@ -40,6 +40,11 @@ const state = {
   groupColumnWidth: null,  // persisted px width for the tree column, once manually resized
   defaultExpandLevel: 0,   // how many hierarchy levels start expanded when the table (re)builds
   zoomLevel: 100,          // CSS zoom percentage applied to the whole grid
+  // Which column the table sorts by every time it (re)builds. Tableau doesn't guarantee stable
+  // row order for an aggregate query across sessions, so without an explicit persisted sort the
+  // displayed order drifts every time the extension reloads — this pins it down for good.
+  defaultSortField: '_label',
+  defaultSortDir: 'asc',
   // { [fieldName]: { alias, filter, visible, order, width, format } } — visible/order/width/
   // format apply to both measure and detail fields (hierarchy fields collapse into one tree
   // column, whose own width is tracked separately via groupColumnWidth above).
@@ -82,6 +87,8 @@ function loadSettings() {
   state.groupColumnWidth = Number.isFinite(saved.groupColumnWidth) ? saved.groupColumnWidth : null;
   state.defaultExpandLevel = Number.isInteger(saved.defaultExpandLevel) ? saved.defaultExpandLevel : 0;
   state.zoomLevel = Number.isFinite(saved.zoomLevel) ? saved.zoomLevel : 100;
+  state.defaultSortField = saved.defaultSortField || '_label';
+  state.defaultSortDir = saved.defaultSortDir === 'desc' ? 'desc' : 'asc';
 }
 
 function persistSettings() {
@@ -95,6 +102,8 @@ function persistSettings() {
     groupColumnWidth: state.groupColumnWidth,
     defaultExpandLevel: state.defaultExpandLevel,
     zoomLevel: state.zoomLevel,
+    defaultSortField: state.defaultSortField,
+    defaultSortDir: state.defaultSortDir,
   }));
   return tableau.extensions.settings.saveAsync();
 }
@@ -165,6 +174,28 @@ function adjustZoom(delta) {
 
 document.getElementById('zoom-in-btn').addEventListener('click', () => adjustZoom(10));
 document.getElementById('zoom-out-btn').addEventListener('click', () => adjustZoom(-10));
+
+// ============================================================================
+// Export control — CSV needs no extra library; Excel uses the vendored SheetJS
+// (lib/xlsx.full.min.js), which Tabulator's download('xlsx', ...) picks up automatically.
+// ============================================================================
+
+function exportFileBaseName() {
+  return (state.groupColumnTitle || 'table').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'table';
+}
+
+document.getElementById('export-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('export-menu').classList.toggle('hidden');
+});
+document.addEventListener('click', () => document.getElementById('export-menu').classList.add('hidden'));
+
+document.getElementById('export-csv-btn').addEventListener('click', () => {
+  if (state.table) state.table.download('csv', `${exportFileBaseName()}.csv`);
+});
+document.getElementById('export-xlsx-btn').addEventListener('click', () => {
+  if (state.table) state.table.download('xlsx', `${exportFileBaseName()}.xlsx`, { sheetName: 'Data' });
+});
 
 /** Maps the "hierarchy", "measures" and "details" shelves (declared in extension.trex) to the
  *  field names the user has dropped on them, preserving shelf order.
@@ -316,6 +347,8 @@ function openConfigureDialog() {
     groupColumnValuesItalic: state.groupColumnValuesItalic,
     groupColumnValuesColor: state.groupColumnValuesColor,
     defaultExpandLevel: state.defaultExpandLevel,
+    defaultSortField: state.defaultSortField,
+    defaultSortDir: state.defaultSortDir,
     hierarchyFieldNames: state.hierarchyFieldNames,
     measureFieldNames: state.measureFieldNames,
     detailFieldNames: state.detailFieldNames,
@@ -333,6 +366,8 @@ function openConfigureDialog() {
       state.groupColumnValuesItalic = result.groupColumnValuesItalic;
       state.groupColumnValuesColor = result.groupColumnValuesColor;
       state.defaultExpandLevel = Number.isInteger(result.defaultExpandLevel) ? result.defaultExpandLevel : 0;
+      state.defaultSortField = result.defaultSortField || '_label';
+      state.defaultSortDir = result.defaultSortDir === 'desc' ? 'desc' : 'asc';
       await persistSettings();
       rebuildTable();
 
@@ -594,6 +629,19 @@ function rebuildTable() {
     (_, i) => i < state.defaultExpandLevel,
   );
 
+  // Pins down a deterministic row order every time the table (re)builds — see the comment on
+  // state.defaultSortField. Falls back to the group column (or the first value column, if there
+  // is no group column) if the configured sort field isn't actually present this time around
+  // (e.g. the field was removed from its shelf).
+  const sortableFieldNames = new Set([
+    ...(showTreeColumn ? ['_label'] : []),
+    ...valueFields.map((f) => f.name),
+  ]);
+  const sortField = sortableFieldNames.has(state.defaultSortField)
+    ? state.defaultSortField
+    : (showTreeColumn ? '_label' : valueFields[0]?.name);
+  const initialSort = sortField ? [{ column: sortField, dir: state.defaultSortDir }] : [];
+
   state.table = new Tabulator('#grid-table', {
     data: rootData,
     layout: 'fitDataFill',
@@ -602,6 +650,7 @@ function rebuildTable() {
     dataTreeChildField: '_children',
     dataTreeStartExpanded: startExpanded,
     columns: columnDefs,
+    initialSort,
     placeholder: 'No data',
     movableColumns: true, // drag a header to reorder columns directly in the grid
     // Tags each row with a depth/role class (see grid-theme.css) so group rows shade/bold

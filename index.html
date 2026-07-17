@@ -8,6 +8,10 @@
   <!-- Tableau Extensions API (self-hosted — the tableau.github.io CDN path returns 404) -->
   <script src="lib/tableau.extensions.1.latest.js"></script>
 
+  <!-- SheetJS — only needed for the "Export to Excel" button; Tabulator's CSV export needs no
+       extra library, but its XLSX export looks for this global at download time. -->
+  <script src="lib/xlsx.full.min.js"></script>
+
   <!-- Tabulator (tree data, sorting, header filters, column pinning/resizing/autosize all built in) -->
   <link rel="stylesheet" href="lib/tabulator_simple.min.css" />
   <script src="lib/tabulator.min.js"></script>
@@ -35,6 +39,27 @@
     }
     #zoom-control button:hover { background: #f0f0f0; }
     #zoom-level { min-width: 34px; text-align: center; }
+
+    #export-control {
+      position: absolute; right: 100px; bottom: 10px; z-index: 20;
+    }
+    #export-btn {
+      display: flex; align-items: center; gap: 4px; cursor: pointer;
+      background: rgba(255,255,255,0.9); border: 1px solid #d1d5db; border-radius: 4px;
+      padding: 3px 8px; font-size: 11px; color: #555;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    #export-btn:hover { background: #f0f0f0; }
+    #export-menu {
+      position: absolute; bottom: 26px; right: 0; z-index: 21;
+      background: #fff; border: 1px solid #d1d5db; border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12); min-width: 110px; overflow: hidden;
+    }
+    #export-menu button {
+      display: block; width: 100%; text-align: left; border: none; background: transparent;
+      padding: 6px 10px; font-size: 11px; color: #555; cursor: pointer;
+    }
+    #export-menu button:hover { background: #f0f0f0; }
   </style>
 </head>
 <body class="h-full">
@@ -56,6 +81,13 @@
   <!-- ============ TABLE VIEW (settings now live in the Format Extension dialog) ============ -->
   <div id="table-view" class="hidden h-full flex flex-col">
     <div id="grid-table" class="flex-1"></div>
+    <div id="export-control">
+      <button id="export-btn" title="Download table">⬇ Export</button>
+      <div id="export-menu" class="hidden">
+        <button id="export-csv-btn">CSV</button>
+        <button id="export-xlsx-btn">Excel (.xlsx)</button>
+      </div>
+    </div>
     <div id="zoom-control">
       <button id="zoom-out-btn" title="Zoom out">−</button>
       <span id="zoom-level">100%</span>
