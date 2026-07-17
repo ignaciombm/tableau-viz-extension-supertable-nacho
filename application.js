@@ -464,6 +464,45 @@ function labelMatchesDeep(rowData, searchTerm) {
   return (rowData._children || []).some((child) => labelMatchesDeep(child, searchTerm));
 }
 
+/** -1/1 if `data` is a subtotal/grand-total row that should be pinned to the top/bottom of its
+ *  siblings, 0 for a normal row. Grand-total rows only ever have top-level groups as siblings,
+ *  and subtotal rows only ever have their own group's children as siblings, so a single rank
+ *  function correctly pins each at whichever tree level it actually occurs. */
+function pinnedRowRank(data) {
+  if (data._isGrandTotal) return state.totals.grandTotal.position === 'top' ? -1 : 1;
+  if (data._isSubtotal) return state.totals.subtotal.position === 'top' ? -1 : 1;
+  return 0;
+}
+
+const stringBaseSorter = (a, b) => (a ?? '').toString().localeCompare((b ?? '').toString());
+const numberBaseSorter = (a, b) => {
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isNaN(na) && Number.isNaN(nb)) return 0;
+  if (Number.isNaN(na)) return -1;
+  if (Number.isNaN(nb)) return 1;
+  return na - nb;
+};
+
+/** Wraps a plain ascending comparator so subtotal/grand-total rows always sort to their
+ *  configured top/bottom position, regardless of which column is sorted or which direction —
+ *  without this, Tabulator sorts those rows' own label/value like any other row (e.g. "Grand
+ *  Total" landing wherever "G" falls alphabetically instead of staying pinned). Tabulator applies
+ *  the asc/desc flip on top of whatever the sorter returns, so pinned rows counter-flip by `dir`
+ *  to cancel that out and stay visually fixed; normal rows fall through to the base comparator
+ *  and let Tabulator's own flip handle their direction as usual. */
+function withPinnedTotals(baseSorter) {
+  return (a, b, aRow, bRow, column, dir) => {
+    const aRank = pinnedRowRank(aRow.getData());
+    const bRank = pinnedRowRank(bRow.getData());
+    if (aRank !== bRank) {
+      const flip = dir === 'desc' ? -1 : 1;
+      return (aRank - bRank) * flip;
+    }
+    return baseSorter(a, b);
+  };
+}
+
 function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupColumnTitleItalic, groupColumnValuesItalic, groupColumnValuesColor, showTreeColumn, groupColumnWidth) {
   // The tree column shows whichever hierarchy field applies at a row's depth (see buildTree's
   // `_label`), so its inline filter is gated on whether ANY hierarchy field asked for one.
@@ -474,6 +513,7 @@ function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupCo
     field: '_label',
     frozen: true, // pinned to the left by default; user can unpin via the header context menu
     headerSort: true,
+    sorter: withPinnedTotals(stringBaseSorter),
     resizable: true,
     // A persisted manual width overrides fitDataFill's auto-sizing for just this column;
     // omitted (undefined) lets it auto-fit as before until the user resizes it once.
@@ -512,7 +552,7 @@ function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupCo
   const valueColumns = valueFields.map((m) => ({
     title: m.format.titleItalic ? `<i>${m.alias}</i>` : m.alias,
     field: m.name,
-    sorter: m.kind === 'measure' ? 'number' : 'string',
+    sorter: withPinnedTotals(m.kind === 'measure' ? numberBaseSorter : stringBaseSorter),
     hozAlign: m.kind === 'measure' ? 'right' : 'left',
     resizable: true,
     ...(m.width ? { width: m.width } : {}),
