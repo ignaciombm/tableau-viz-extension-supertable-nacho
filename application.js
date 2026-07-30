@@ -903,7 +903,12 @@ function expandAllTreeRows(rows) {
   rows.forEach((row) => {
     const children = row.getTreeChildren ? row.getTreeChildren() : [];
     if (children.length > 0) {
-      row.treeExpand();
+      // Tabulator's expandRow() unconditionally calls refreshData(), which re-runs the filter
+      // pipeline and re-dispatches dataFiltered — whose handler calls back into this very
+      // function. Skipping rows that are already expanded is what stops that from looping
+      // forever: once every row in the tree is open, treeExpand() is never called again, so no
+      // further dataFiltered event gets triggered and the chain terminates.
+      if (!row.isTreeExpanded()) row.treeExpand();
       expandAllTreeRows(children);
     }
   });
