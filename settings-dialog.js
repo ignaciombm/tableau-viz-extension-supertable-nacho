@@ -17,6 +17,7 @@ let orderChangedByDrag = false;
 
 tableau.extensions.initializeDialogAsync().then((openPayloadStr) => {
   payload = JSON.parse(openPayloadStr);
+  document.getElementById('build-version').textContent = payload.buildVersion || '?';
   document.getElementById('group-column-title').value = payload.groupColumnTitle || '';
   document.getElementById('group-title-italic').checked = !!payload.groupColumnTitleItalic;
   document.getElementById('group-values-italic').checked = !!payload.groupColumnValuesItalic;

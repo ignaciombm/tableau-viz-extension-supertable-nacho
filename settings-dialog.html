@@ -6,8 +6,9 @@
   <script src="lib/tableau.extensions.1.latest.js"></script>
   <!-- ?v= cache-buster, computed fresh on every load (see index.html for why a fixed number
        isn't enough) so a stale cached copy of this dialog's own JS/CSS can't linger. The "Build:"
-       marker below is a separate, manually-bumped human-visible confirmation that a given deploy
-       actually reached this dialog. -->
+       marker below is filled in from the payload the worksheet page passes in (BUILD_VERSION in
+       application.js) rather than being hand-maintained here too — a second copy of the same
+       version number is just another place to forget to bump it. -->
   <script>document.write('<link rel="stylesheet" href="styles.css?v=' + Date.now() + '">');</script>
   <style>
     body { padding: 16px; }
@@ -24,7 +25,7 @@
   </style>
 </head>
 <body>
-  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: v4</div>
+  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: <span id="build-version"></span></div>
 
   <section>
     <h2 class="font-semibold text-base mb-2">Group column</h2>

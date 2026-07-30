@@ -20,6 +20,12 @@
  * card (see <context-menu> in extension.trex), and persisted via tableau.extensions.settings.
  */
 
+// Single source of truth for "am I on the latest deploy" — shown on the grid itself (see
+// applyZoom's sibling call in the init chain below) AND passed into the Format Extension dialog's
+// payload, instead of each of the two pages carrying its own hand-maintained "Build: vN" string
+// that's easy to bump in one place and forget in the other. Bump this on every deploy.
+const BUILD_VERSION = 'v5';
+
 const SETTINGS_KEY = 'collapsibleGroupingTableConfig';
 
 const DEFAULT_FORMAT = {
@@ -168,6 +174,7 @@ async function refresh() {
 function applyZoom() {
   document.getElementById('grid-table').style.zoom = `${state.zoomLevel}%`;
   document.getElementById('zoom-level').textContent = `${state.zoomLevel}%`;
+  document.getElementById('build-version').textContent = BUILD_VERSION;
 }
 
 function adjustZoom(delta) {
@@ -358,6 +365,7 @@ function openConfigureDialog() {
     hierarchyFieldNames: state.hierarchyFieldNames,
     measureFieldNames: state.measureFieldNames,
     detailFieldNames: state.detailFieldNames,
+    buildVersion: BUILD_VERSION,
   });
 
   // Cache-bust the dialog URL itself, not just the assets it references: unlike index.html, this
