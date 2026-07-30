@@ -17,13 +17,16 @@
   <script src="lib/tabulator.min.js"></script>
 
   <!-- Small local stylesheet replacing the Tailwind CDN so the extension has no external
-       network dependency at all. The ?v= query string is a cache-buster: bump it (see the
-       matching value in settings-dialog.html) on every deploy so the browser/CDN can't serve a
-       stale cached copy of our own files under this same URL. -->
-  <link rel="stylesheet" href="styles.css?v=3" />
+       network dependency at all. The ?v= query string is a cache-buster, computed fresh on every
+       load (see the inline scripts below) rather than a fixed number baked into this file — a
+       static ?v=N only busts the cache of clients that already fetched a NEW copy of this very
+       index.html; a client stuck on a stale cached index.html would keep requesting whatever old
+       ?v=N it always had, defeating the bust. Computing it at load time means even a stale-cached
+       index.html still forces a fresh network fetch of our own JS/CSS every time it runs. -->
+  <script>document.write('<link rel="stylesheet" href="styles.css?v=' + Date.now() + '">');</script>
 
   <!-- Discreet neutral grid theme, layered on top of Tabulator's blank "simple" theme -->
-  <link rel="stylesheet" href="grid-theme.css?v=3" />
+  <script>document.write('<link rel="stylesheet" href="grid-theme.css?v=' + Date.now() + '">');</script>
 
   <style>
     #grid-table { flex: 1 1 auto; min-height: 0; }
@@ -97,6 +100,6 @@
     </div>
   </div>
 
-  <script src="application.js?v=3"></script>
+  <script>document.write('<script src="application.js?v=' + Date.now() + '"><\/script>');</script>
 </body>
 </html>

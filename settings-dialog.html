@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <title>Collapsible Grouping Table — Settings</title>
   <script src="lib/tableau.extensions.1.latest.js"></script>
-  <!-- ?v= cache-buster — bump this (and the matching value in index.html) on every deploy so a
-       stale cached copy can't linger; EXTENSION_BUILD below is the human-visible confirmation
-       that a given deploy actually reached this dialog. -->
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <!-- ?v= cache-buster, computed fresh on every load (see index.html for why a fixed number
+       isn't enough) so a stale cached copy of this dialog's own JS/CSS can't linger. The "Build:"
+       marker below is a separate, manually-bumped human-visible confirmation that a given deploy
+       actually reached this dialog. -->
+  <script>document.write('<link rel="stylesheet" href="styles.css?v=' + Date.now() + '">');</script>
   <style>
     body { padding: 16px; }
     .format-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -23,7 +24,7 @@
   </style>
 </head>
 <body>
-  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: v3</div>
+  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: v4</div>
 
   <section>
     <h2 class="font-semibold text-base mb-2">Group column</h2>
@@ -113,6 +114,6 @@
     <button id="save-btn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save</button>
   </div>
 
-  <script src="settings-dialog.js?v=3"></script>
+  <script>document.write('<script src="settings-dialog.js?v=' + Date.now() + '"><\/script>');</script>
 </body>
 </html>

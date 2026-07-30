@@ -530,8 +530,15 @@ function handleInteractiveSort(sorters) {
   // sort has already run once (ignoring pinning) by the time this fires, so skipping the rebuild
   // here just because the field/dir "looks unchanged" would leave that wrong pass on screen.
 
+  // NOT sorter.dir: Tabulator tracks each column's own asc/desc toggle state on the column object
+  // itself, which is wiped out every time (rebuildTable destroys and recreates the whole table on
+  // every sort, by design — see above) — so sorter.dir here is always just that column's starting
+  // direction, never a real second-click toggle. state.defaultSortField/Dir is the only thing that
+  // survives across rebuilds, so toggle off of that instead: same column clicked again flips the
+  // direction; a different column starts fresh at ascending.
+  const sameField = sorter.field === state.defaultSortField;
+  state.defaultSortDir = sameField && state.defaultSortDir === 'asc' ? 'desc' : 'asc';
   state.defaultSortField = sorter.field;
-  state.defaultSortDir = sorter.dir;
   persistSettings();
   handlingInteractiveSort = true;
   // Deferred: this fires from inside Tabulator's own dataSorted dispatch, which is still
@@ -758,44 +765,72 @@ function rebuildTable() {
       else if (data._isGroup) el.classList.add(`row-depth-${data._depth}`);
       else el.classList.add('row-leaf');
     },
-    // Tabulator hides tree-data matches inside collapsed branches without expanding them —
-    // force everything open while a filter is active so nested matches are actually visible.
-    dataFiltered: (filters) => {
-      if (filters.length > 0) expandAllTreeRows(state.table.getRows());
-    },
-    // Persists a drag-reorder in the grid back into the same `order` the settings dialog
-    // uses, so it survives the next rebuild instead of reverting.
-    columnMoved: () => {
-      state.table.getColumns().filter((c) => c.getField() !== '_label').forEach((col, i) => {
-        const name = col.getField();
-        if (state.fieldSettings[name]) {
-          state.fieldSettings[name].order = i;
-          state.fieldSettings[name].orderManuallySet = true;
-        }
-      });
-      persistSettings();
-    },
-    // Persists a manual resize (drag or the "Autosize" actions, which also fire this) so the
-    // width survives the next rebuild instead of fitDataFill recalculating it from scratch.
-    columnResized: (column) => {
-      const field = column.getField();
-      const width = column.getWidth();
-      if (field === '_label') state.groupColumnWidth = width;
-      else if (state.fieldSettings[field]) state.fieldSettings[field].width = width;
-      persistSettings();
-    },
-    // Header-rename and filter-toggle attachment have to wait for this event: table construction
-    // is asynchronous, so calling col.getElement() right after `new Tabulator(...)` returns can
-    // hit a DOM that isn't there yet, silently no-op'ing the button/handler attachment.
-    tableBuilt: () => {
-      document.getElementById('grid-table').classList.toggle('filters-always-visible', state.filtersAlwaysVisible);
-      attachHeaderRenameHandlers();
-      if (!state.filtersAlwaysVisible) attachFilterToggleButtons();
-    },
-    // Every interactive header-click sort is re-routed through handleInteractiveSort, which
-    // rebuilds the table via the exact same sortRowsPreservingPins() call used for the initial
-    // render, instead of trying to patch up Tabulator's own sort result afterward.
-    dataSorted: (sorters) => handleInteractiveSort(sorters),
+  });
+
+  // NOTE: dataFiltered/columnMoved/columnResized/tableBuilt/dataSorted are deliberately wired via
+  // .on() below, NOT passed inline in the constructor options object above. Tabulator's docs say
+  // constructor-option callbacks are equivalent to .on(), but in this vendored build (tabulator.min.js,
+  // v5.5.2) they are silently never invoked when passed that way — confirmed by direct testing (see
+  // the harness used to diagnose the "grand total moves when sorting" bug: dataSorted never fired,
+  // so header clicks always fell through to Tabulator's own pin-unaware native sort). Registering the
+  // exact same handlers via .on() immediately after construction — even before the table has finished
+  // its internal (async) build — reliably catches every one of these events.
+
+  // Tabulator hides tree-data matches inside collapsed branches without expanding them —
+  // force everything open while a filter is active so nested matches are actually visible.
+  state.table.on('dataFiltered', (filters) => {
+    if (filters.length > 0) expandAllTreeRows(state.table.getRows());
+  });
+
+  // Persists a drag-reorder in the grid back into the same `order` the settings dialog
+  // uses, so it survives the next rebuild instead of reverting.
+  state.table.on('columnMoved', () => {
+    state.table.getColumns().filter((c) => c.getField() !== '_label').forEach((col, i) => {
+      const name = col.getField();
+      if (state.fieldSettings[name]) {
+        state.fieldSettings[name].order = i;
+        state.fieldSettings[name].orderManuallySet = true;
+      }
+    });
+    persistSettings();
+  });
+
+  // Persists a manual resize (drag or the "Autosize" actions, which also fire this) so the
+  // width survives the next rebuild instead of fitDataFill recalculating it from scratch.
+  state.table.on('columnResized', (column) => {
+    const field = column.getField();
+    const width = column.getWidth();
+    if (field === '_label') state.groupColumnWidth = width;
+    else if (state.fieldSettings[field]) state.fieldSettings[field].width = width;
+    persistSettings();
+  });
+
+  // Header-rename and filter-toggle attachment have to wait for this event: table construction
+  // is asynchronous, so calling col.getElement() right after `new Tabulator(...)` returns can
+  // hit a DOM that isn't there yet, silently no-op'ing the button/handler attachment.
+  state.table.on('tableBuilt', () => {
+    document.getElementById('grid-table').classList.toggle('filters-always-visible', state.filtersAlwaysVisible);
+    attachHeaderRenameHandlers();
+    if (!state.filtersAlwaysVisible) attachFilterToggleButtons();
+    updateSortIndicator(sortField, state.defaultSortDir);
+  });
+
+  // Every interactive header-click sort is re-routed through handleInteractiveSort, which
+  // rebuilds the table via the exact same sortRowsPreservingPins() call used for the initial
+  // render, instead of trying to patch up Tabulator's own sort result afterward.
+  state.table.on('dataSorted', (sorters) => handleInteractiveSort(sorters));
+}
+
+/** Tabulator's own aria-sort attribute (and the arrow it drives, styled in grid-theme.css) only
+ *  ever reflects a sort Tabulator itself just ran — since every actual sort here goes through
+ *  sortRowsPreservingPins() instead (see rebuildTable), Tabulator never sets it on its own. Set it
+ *  by hand after every (re)build so the arrow highlights the active column and points the right
+ *  way, matching state.defaultSortField/Dir, on first load as well as after every click. */
+function updateSortIndicator(sortField, dir) {
+  if (!state.table) return;
+  state.table.getColumns().forEach((col) => {
+    const el = col.getElement();
+    el.setAttribute('aria-sort', col.getField() === sortField ? (dir === 'desc' ? 'descending' : 'ascending') : 'none');
   });
 }
 
