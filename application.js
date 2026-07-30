@@ -360,7 +360,12 @@ function openConfigureDialog() {
     detailFieldNames: state.detailFieldNames,
   });
 
-  tableau.extensions.ui.displayDialogAsync('settings-dialog.html', openPayload, { height: 700, width: 820 })
+  // Cache-bust the dialog URL itself, not just the assets it references: unlike index.html, this
+  // fetch happens lazily (only when the dialog is actually opened) rather than at page load, so a
+  // browser-level cache entry for it can linger indefinitely regardless of how many times the
+  // worksheet page itself gets refreshed — the only fix is to make every open request a genuinely
+  // new URL.
+  tableau.extensions.ui.displayDialogAsync(`settings-dialog.html?v=${Date.now()}`, openPayload, { height: 700, width: 820 })
     .then(async (closePayloadStr) => {
       const result = JSON.parse(closePayloadStr);
       if (result.action === 'cancel') return;
