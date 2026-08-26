@@ -24,9 +24,22 @@
 // dialog's payload (see openConfigureDialog below) instead of the dialog carrying its own
 // hand-maintained "Build: vN" string, which is just another place to forget to bump it. Only
 // visible in that dialog ("Build: vN" near the top) — bump this on every deploy.
-const BUILD_VERSION = 'v5';
+const BUILD_VERSION = 'v6';
 
 const SETTINGS_KEY = 'collapsibleGroupingTableConfig';
+
+/** Cheap non-cryptographic checksum, just to give two settings blobs a short, eyeballable
+ *  fingerprint — used by the "vN · cfg:xxxxxx" readout (see renderDebugInfo) so you can ask an
+ *  affected user to read/screenshot theirs and compare it against yours: if the hash differs,
+ *  their tableau.extensions.settings.get() is genuinely returning something different (or
+ *  nothing) from what you saved, which is real proof of a settings-delivery problem rather than
+ *  a rendering bug — and if it MATCHES but still looks wrong for them, that rules settings out
+ *  entirely and points at something else (their view, their data permissions, etc). */
+function shortHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = (Math.imul(h, 31) + str.charCodeAt(i)) >>> 0;
+  return h.toString(16).padStart(6, '0');
+}
 
 const DEFAULT_FORMAT = {
   type: 'default', decimals: 0, thousandsSeparator: true, prefix: '', suffix: '', nullValue: '',
@@ -54,6 +67,13 @@ const state = {
   // When true, every configured inline filter shows permanently in a row below the headers
   // (Tabulator's native header-filter markup) instead of behind a toggle icon.
   filtersAlwaysVisible: true,
+  // Whether the small "vN · cfg:xxxxxx" readout next to the zoom control is visible. Defaults to
+  // shown so a fresh install is immediately diagnosable; turn it off from the Format Extension
+  // dialog once you've confirmed everyone is in sync.
+  showDebugInfo: true,
+  // Fingerprint of whatever tableau.extensions.settings.get() actually returned to THIS viewer —
+  // see shortHash's comment. 'none' means no saved settings reached this viewer at all.
+  settingsFingerprint: 'none',
   // { [fieldName]: { alias, filter, visible, order, width, format } } — visible/order/width/
   // format apply to both measure and detail fields (hierarchy fields collapse into one tree
   // column, whose own width is tracked separately via groupColumnWidth above).
@@ -78,6 +98,7 @@ function nextId() {
 
 tableau.extensions.initializeAsync({ configure: openConfigureDialog }).then(() => {
   loadSettings();
+  renderDebugInfo();
   state.worksheet = tableau.extensions.worksheetContent.worksheet;
   state.worksheet.addEventListener(tableau.TableauEventType.SummaryDataChanged, refresh);
   refresh();
@@ -85,6 +106,7 @@ tableau.extensions.initializeAsync({ configure: openConfigureDialog }).then(() =
 
 function loadSettings() {
   const raw = tableau.extensions.settings.get(SETTINGS_KEY);
+  state.settingsFingerprint = raw ? shortHash(raw) : 'none';
   if (!raw) return;
   const saved = JSON.parse(raw);
   state.fieldSettings = saved.fieldSettings || {};
@@ -99,10 +121,11 @@ function loadSettings() {
   state.defaultSortField = saved.defaultSortField || '_label';
   state.defaultSortDir = saved.defaultSortDir === 'desc' ? 'desc' : 'asc';
   if (saved.filtersAlwaysVisible !== undefined) state.filtersAlwaysVisible = !!saved.filtersAlwaysVisible;
+  if (saved.showDebugInfo !== undefined) state.showDebugInfo = !!saved.showDebugInfo;
 }
 
 function persistSettings() {
-  tableau.extensions.settings.set(SETTINGS_KEY, JSON.stringify({
+  const payloadStr = JSON.stringify({
     fieldSettings: state.fieldSettings,
     totals: state.totals,
     groupColumnTitle: state.groupColumnTitle,
@@ -115,8 +138,21 @@ function persistSettings() {
     defaultSortField: state.defaultSortField,
     defaultSortDir: state.defaultSortDir,
     filtersAlwaysVisible: state.filtersAlwaysVisible,
-  }));
+    showDebugInfo: state.showDebugInfo,
+  });
+  tableau.extensions.settings.set(SETTINGS_KEY, payloadStr);
+  state.settingsFingerprint = shortHash(payloadStr);
+  renderDebugInfo();
   return tableau.extensions.settings.saveAsync();
+}
+
+/** Small "vN · cfg:xxxxxx" readout next to the zoom control (see #debug-info in index.html) —
+ *  see shortHash's comment for why this is worth more than the build version alone. */
+function renderDebugInfo() {
+  const el = document.getElementById('debug-info');
+  if (!el) return;
+  el.textContent = `${BUILD_VERSION} · cfg:${state.settingsFingerprint}`;
+  el.classList.toggle('hidden', !state.showDebugInfo);
 }
 
 function switchView(viewId) {
@@ -365,6 +401,8 @@ function openConfigureDialog() {
     measureFieldNames: state.measureFieldNames,
     detailFieldNames: state.detailFieldNames,
     buildVersion: BUILD_VERSION,
+    settingsFingerprint: state.settingsFingerprint,
+    showDebugInfo: state.showDebugInfo,
   });
 
   // Cache-bust the dialog URL itself, not just the assets it references: unlike index.html, this
@@ -387,6 +425,7 @@ function openConfigureDialog() {
       state.defaultSortField = result.defaultSortField || '_label';
       state.defaultSortDir = result.defaultSortDir === 'desc' ? 'desc' : 'asc';
       state.filtersAlwaysVisible = result.filtersAlwaysVisible !== false;
+      state.showDebugInfo = result.showDebugInfo !== false;
       await persistSettings();
       rebuildTable();
 

@@ -18,6 +18,8 @@ let orderChangedByDrag = false;
 tableau.extensions.initializeDialogAsync().then((openPayloadStr) => {
   payload = JSON.parse(openPayloadStr);
   document.getElementById('build-version').textContent = payload.buildVersion || '?';
+  document.getElementById('config-fingerprint').textContent = payload.settingsFingerprint || 'none';
+  document.getElementById('show-debug-info').checked = payload.showDebugInfo !== false;
   document.getElementById('group-column-title').value = payload.groupColumnTitle || '';
   document.getElementById('group-title-italic').checked = !!payload.groupColumnTitleItalic;
   document.getElementById('group-values-italic').checked = !!payload.groupColumnValuesItalic;
@@ -235,6 +237,7 @@ function collectFormValues() {
   payload.defaultSortField = document.getElementById('default-sort-field').value;
   payload.defaultSortDir = document.getElementById('default-sort-dir').value;
   payload.filtersAlwaysVisible = document.getElementById('filters-always-visible').checked;
+  payload.showDebugInfo = document.getElementById('show-debug-info').checked;
 
   document.querySelectorAll('.alias-input').forEach((el) => { ensureSetting(el.dataset.field).alias = el.value; });
   document.querySelectorAll('.filter-checkbox').forEach((el) => { ensureSetting(el.dataset.field).filter = el.checked; });
@@ -255,6 +258,64 @@ function collectFormValues() {
   payload.totals.subtotal.enabled = document.getElementById('subtotal-enabled').checked;
   payload.totals.subtotal.position = document.getElementById('subtotal-position').value;
 }
+
+// ============================================================================
+// Backup / copy configuration — plain-JSON export/import via the clipboard. Import only
+// overwrites fields present in the pasted JSON, so pasting a config exported from a table with
+// different field names just leaves those fields unmatched (harmless — they'll fall back to
+// their own defaults) rather than corrupting anything.
+// ============================================================================
+
+function flashCopyStatus(text, isError) {
+  const el = document.getElementById('copy-status');
+  el.textContent = text;
+  el.style.color = isError ? '#b91c1c' : '#16a34a';
+  setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 4000);
+}
+
+document.getElementById('copy-config-btn').addEventListener('click', async () => {
+  collectFormValues();
+  const exportable = {
+    fieldSettings: payload.fieldSettings,
+    totals: payload.totals,
+    groupColumnTitle: payload.groupColumnTitle,
+    groupColumnTitleItalic: payload.groupColumnTitleItalic,
+    groupColumnValuesItalic: payload.groupColumnValuesItalic,
+    groupColumnValuesColor: payload.groupColumnValuesColor,
+    defaultExpandLevel: payload.defaultExpandLevel,
+    defaultSortField: payload.defaultSortField,
+    defaultSortDir: payload.defaultSortDir,
+    filtersAlwaysVisible: payload.filtersAlwaysVisible,
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(exportable, null, 2));
+    flashCopyStatus('Copied to clipboard');
+  } catch (err) {
+    flashCopyStatus(`Copy failed (clipboard may be blocked here): ${err}`, true);
+  }
+});
+
+document.getElementById('paste-config-btn').addEventListener('click', async () => {
+  let imported;
+  try {
+    imported = JSON.parse(await navigator.clipboard.readText());
+  } catch (err) {
+    flashCopyStatus(`Paste failed (clipboard blocked, or not valid JSON): ${err}`, true);
+    return;
+  }
+  Object.assign(payload, imported);
+  document.getElementById('group-column-title').value = payload.groupColumnTitle || '';
+  document.getElementById('group-title-italic').checked = !!payload.groupColumnTitleItalic;
+  document.getElementById('group-values-italic').checked = !!payload.groupColumnValuesItalic;
+  document.getElementById('group-values-color').value = payload.groupColumnValuesColor || '#000000';
+  document.getElementById('default-expand-level').value = Number.isInteger(payload.defaultExpandLevel) ? payload.defaultExpandLevel : 0;
+  document.getElementById('filters-always-visible').checked = payload.filtersAlwaysVisible !== false;
+  renderFieldRows();
+  renderOrderList();
+  renderSortOptions();
+  renderTotals();
+  flashCopyStatus('Pasted — review below, then Save to apply');
+});
 
 document.getElementById('save-btn').addEventListener('click', () => {
   collectFormValues();

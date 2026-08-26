@@ -25,7 +25,29 @@
   </style>
 </head>
 <body>
-  <div class="text-xs text-gray-500 mb-3" style="text-align:right;">Build: <span id="build-version"></span></div>
+  <div class="text-xs text-gray-500 mb-1" style="text-align:right;">
+    Build: <span id="build-version"></span> · cfg:<span id="config-fingerprint"></span>
+  </div>
+  <div class="mb-3" style="text-align:right;">
+    <label class="text-xs text-gray-500 flex items-center gap-1 justify-end">
+      <input type="checkbox" id="show-debug-info" />
+      Show this next to the zoom control
+    </label>
+  </div>
+
+  <section class="mb-4">
+    <h2 class="font-semibold text-base mb-2">Backup / copy this configuration</h2>
+    <p class="text-xs text-gray-500 mb-2">
+      Copies everything on this page (aliases, formats, totals, sort, etc — not zoom or column
+      widths, those live on the table itself) as JSON. Useful as a backup before experimenting, or
+      to carry the same setup onto a similarly-structured table.
+    </p>
+    <div class="flex items-center gap-2">
+      <button id="copy-config-btn" class="border px-2 py-1 rounded hover:bg-gray-100" type="button">⧉ Copy configuration</button>
+      <button id="paste-config-btn" class="border px-2 py-1 rounded hover:bg-gray-100" type="button">📋 Paste configuration</button>
+      <span id="copy-status" class="text-xs"></span>
+    </div>
+  </section>
 
   <section>
     <h2 class="font-semibold text-base mb-2">Group column</h2>
