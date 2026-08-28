@@ -10,6 +10,13 @@
 
 let payload = null;
 let draggedChip = null;
+
+/** fieldSettings is keyed by a locale-independent key (see settingsKeyFor in application.js), not
+ *  by the field's current name — this resolves a name (from data-field attrs, always the current
+ *  display name) to that key. */
+function settingsKeyFor(name) {
+  return (payload.settingsKeyByName && payload.settingsKeyByName[name]) || name;
+}
 // True once the user actually drags a chip in this dialog session — distinguishes "order still
 // tracking Marks card shelf position" from "user deliberately picked a custom order", so merely
 // opening the dialog and clicking Save doesn't freeze every field's order.
@@ -61,7 +68,7 @@ function renderSortOptions() {
   [...payload.measureFieldNames, ...(payload.detailFieldNames || [])].forEach((name) => {
     const opt = document.createElement('option');
     opt.value = name;
-    opt.textContent = payload.fieldSettings[name]?.alias || name;
+    opt.textContent = payload.fieldSettings[settingsKeyFor(name)]?.alias || name;
     select.appendChild(opt);
   });
 
@@ -93,7 +100,7 @@ function renderFieldRows() {
   ];
 
   rows.forEach(({ name, role }) => {
-    const setting = payload.fieldSettings[name] || { alias: name, filter: true };
+    const setting = payload.fieldSettings[settingsKeyFor(name)] || { alias: name, filter: true };
     const tr = document.createElement('tr');
     tr.className = 'border-b';
     const formatCell = role !== 'Hierarchy' ? formatControlsHtml(name, setting.format) : '<span class="text-gray-500">—</span>';
@@ -150,8 +157,9 @@ function formatControlsHtml(name, format) {
 }
 
 function ensureSetting(name) {
-  if (!payload.fieldSettings[name]) payload.fieldSettings[name] = { alias: name, filter: true };
-  return payload.fieldSettings[name];
+  const key = settingsKeyFor(name);
+  if (!payload.fieldSettings[key]) payload.fieldSettings[key] = { alias: name, filter: true };
+  return payload.fieldSettings[key];
 }
 
 function ensureFormat(name) {
@@ -169,13 +177,13 @@ function renderOrderList() {
   container.innerHTML = '';
 
   const ordered = [...payload.measureFieldNames, ...(payload.detailFieldNames || [])].sort((a, b) => {
-    const oa = payload.fieldSettings[a]?.order ?? 0;
-    const ob = payload.fieldSettings[b]?.order ?? 0;
+    const oa = payload.fieldSettings[settingsKeyFor(a)]?.order ?? 0;
+    const ob = payload.fieldSettings[settingsKeyFor(b)]?.order ?? 0;
     return oa - ob;
   });
 
   ordered.forEach((name) => {
-    const setting = payload.fieldSettings[name] || {};
+    const setting = payload.fieldSettings[settingsKeyFor(name)] || {};
     const isHidden = setting.visible === false;
     const chip = document.createElement('div');
     chip.className = 'order-chip';

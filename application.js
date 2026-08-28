@@ -24,7 +24,7 @@
 // dialog's payload (see openConfigureDialog below) instead of the dialog carrying its own
 // hand-maintained "Build: vN" string, which is just another place to forget to bump it. Only
 // visible in that dialog ("Build: vN" near the top) — bump this on every deploy.
-const BUILD_VERSION = 'v6';
+const BUILD_VERSION = 'v8';
 
 const SETTINGS_KEY = 'collapsibleGroupingTableConfig';
 
@@ -41,6 +41,34 @@ function shortHash(str) {
   return h.toString(16).padStart(6, '0');
 }
 
+/**
+ * Field.id looked like the right stable, locale-independent key — Tableau added it in 2021.2
+ * specifically because field NAMES change with the viewer's language — but it came back null for
+ * this workbook's fields (likely calculated fields, or an older Tableau version not populating
+ * it), and using it corrupted both the settings AND the actual displayed data (every field with a
+ * null id collapsed onto one shared key). Reverted — see git history.
+ *
+ * This is the safer, narrower replacement: it does NOT touch how rows/columns are read, grouped,
+ * or rendered at all (that logic still keys everything by the plain field name exactly as
+ * before, self-consistent within any one viewer's own session). It ONLY changes the key used to
+ * store/look up a field's alias/format/etc in fieldSettings, deriving it from the field's name
+ * with any aggregation wrapper (SUM(...), AVG(...), ...) stripped — that wrapper WORD is what
+ * translates per viewer language (e.g. SUM vs SUMA), not the field name inside the parentheses,
+ * which is whatever the calculated field is actually called and doesn't get auto-translated.
+ */
+function coreFieldName(name) {
+  const m = /^[^(]*\(([\s\S]*)\)$/.exec(name);
+  return m ? m[1] : name;
+}
+
+/** The settings-dictionary key for a field, given its CURRENT (this-viewer's-locale) name — looks
+ *  up the aggregation captured for it in state.settingsKeyByName (see getEncodingMap) so two
+ *  different aggregations of the same field still get different keys, then falls back to the
+ *  name itself if that map somehow doesn't have an entry (defensive; shouldn't happen in practice). */
+function settingsKeyFor(name) {
+  return state.settingsKeyByName[name] || name;
+}
+
 const DEFAULT_FORMAT = {
   type: 'default', decimals: 0, thousandsSeparator: true, prefix: '', suffix: '', nullValue: '',
   titleItalic: false, valuesItalic: false, valuesColor: '#000000',
@@ -52,6 +80,7 @@ const state = {
   measureFieldNames: [],   // as dropped on the "measures" shelf
   detailFieldNames: [],    // as dropped on the "details" shelf — shown per-record, not grouped
   valueFieldOrder: [],     // measures+details combined, in Tableau's true Marks card shelf order
+  settingsKeyByName: {},   // { [currentFieldName]: locale-independent fieldSettings key } — see settingsKeyFor
   groupColumnTitle: null,  // custom title for the tree/group column; defaulted on first load
   groupColumnTitleItalic: false,
   groupColumnValuesItalic: false,
@@ -178,11 +207,12 @@ function showEmptyView(errorMessage) {
 
 async function refresh() {
   try {
-    const { hierarchy, measures, details, valueFieldOrder } = await getEncodingMap(state.worksheet);
+    const { hierarchy, measures, details, valueFieldOrder, settingsKeyByName } = await getEncodingMap(state.worksheet);
     state.hierarchyFieldNames = hierarchy;
     state.measureFieldNames = measures;
     state.detailFieldNames = details;
     state.valueFieldOrder = valueFieldOrder;
+    state.settingsKeyByName = settingsKeyByName;
 
     // A measure is always required; hierarchy (grouping) and details (ungrouped columns) are
     // each optional, but at least one of the two must be present — otherwise there's nothing
@@ -192,12 +222,16 @@ async function refresh() {
       return;
     }
 
-    ensureFieldSettingsDefaults();
+    const migrated = ensureFieldSettingsDefaults();
     state.lastFlatRows = await getSummaryDataTable(state.worksheet);
 
     rebuildTable();
     applyZoom();
     switchView('table-view');
+    // Writes back the one-time name->key migration (see migrateNameKeyedSettingsToKeys) so other
+    // viewers benefit as soon as THIS session loads it once, not only after someone next opens
+    // Format Extension and hits Save.
+    if (migrated) persistSettings();
   } catch (err) {
     showEmptyView(`Failed to load data: ${err}`);
   }
@@ -259,13 +293,19 @@ async function getEncodingMap(worksheet) {
   const measures = [];
   const details = [];
   const valueFieldOrder = [];
+  const settingsKeyByName = {};
   marksCard.encodings.forEach((encoding) => {
     if (!encoding.field) return;
-    if (encoding.id === 'hierarchy') hierarchy.push(encoding.field.name);
-    if (encoding.id === 'measures') { measures.push(encoding.field.name); valueFieldOrder.push(encoding.field.name); }
-    if (encoding.id === 'details') { details.push(encoding.field.name); valueFieldOrder.push(encoding.field.name); }
+    const name = encoding.field.name;
+    // aggregation is a stable API-level enum (e.g. "Sum"), not the translated display word baked
+    // into `name` — combined with the wrapper-stripped core name, this stays put across viewers
+    // regardless of language, without depending on Field.id (see coreFieldName's comment on why).
+    settingsKeyByName[name] = `${encoding.field.aggregation || 'None'}::${coreFieldName(name)}`;
+    if (encoding.id === 'hierarchy') hierarchy.push(name);
+    if (encoding.id === 'measures') { measures.push(name); valueFieldOrder.push(name); }
+    if (encoding.id === 'details') { details.push(name); valueFieldOrder.push(name); }
   });
-  return { hierarchy, measures, details, valueFieldOrder };
+  return { hierarchy, measures, details, valueFieldOrder, settingsKeyByName };
 }
 
 /** Reads the worksheet's flat summary data, returning an array of plain `{fieldName: value}`
@@ -288,10 +328,36 @@ async function getSummaryDataTable(worksheet) {
   });
 }
 
+/** One-time upgrade path: settings saved before settingsKeyFor existed were keyed directly by
+ *  field NAME — exactly what broke aliases/formats for viewers on a different Tableau language
+ *  than whoever configured it. For each field currently on a shelf, if there's no entry yet under
+ *  its new (locale-independent) key but there IS an old one under this viewer's own (locale-
+ *  dependent) name for it, carry it over. This only finds anything on a viewer whose current
+ *  field names happen to match whatever locale the settings were originally saved under
+ *  (typically whoever configured it) — that's fine: refresh() persists the result immediately
+ *  after, so it only has to happen once, ever, for every other viewer to benefit. Returns whether
+ *  anything was migrated. */
+function migrateNameKeyedSettingsToKeys() {
+  let migrated = false;
+  [...state.hierarchyFieldNames, ...state.valueFieldOrder].forEach((name) => {
+    const key = settingsKeyFor(name);
+    if (state.fieldSettings[key]) return;
+    if (state.fieldSettings[name]) {
+      state.fieldSettings[key] = state.fieldSettings[name];
+      delete state.fieldSettings[name];
+      migrated = true;
+    }
+  });
+  return migrated;
+}
+
 function ensureFieldSettingsDefaults() {
+  const migrated = migrateNameKeyedSettingsToKeys();
+
   state.hierarchyFieldNames.forEach((name) => {
-    if (!state.fieldSettings[name]) {
-      state.fieldSettings[name] = { alias: name, filter: true };
+    const key = settingsKeyFor(name);
+    if (!state.fieldSettings[key]) {
+      state.fieldSettings[key] = { alias: name, filter: true };
     }
   });
 
@@ -305,8 +371,9 @@ function ensureFieldSettingsDefaults() {
   // `orderManuallySet`, freezing its position from then on. state.valueFieldOrder is measures+
   // details in Tableau's REAL reported shelf order (see getEncodingMap), not an assumed one.
   state.valueFieldOrder.forEach((name, i) => {
-    if (!state.fieldSettings[name]) {
-      state.fieldSettings[name] = {
+    const key = settingsKeyFor(name);
+    if (!state.fieldSettings[key]) {
+      state.fieldSettings[key] = {
         alias: name,
         filter: true,
         visible: true,
@@ -316,7 +383,7 @@ function ensureFieldSettingsDefaults() {
       };
     } else {
       // Backfill fields added after settings were first saved, so older saved configs upgrade cleanly.
-      const s = state.fieldSettings[name];
+      const s = state.fieldSettings[key];
       if (s.visible === undefined) s.visible = true;
       if (s.orderManuallySet === undefined) s.orderManuallySet = false;
       if (!s.orderManuallySet) s.order = i;
@@ -334,18 +401,20 @@ function ensureFieldSettingsDefaults() {
   if (!state.groupColumnTitle && state.hierarchyFieldNames.length > 0) {
     state.groupColumnTitle = getFieldAlias(state.hierarchyFieldNames[0]);
   }
+
+  return migrated;
 }
 
 function getFieldAlias(name) {
-  return state.fieldSettings[name]?.alias || name;
+  return state.fieldSettings[settingsKeyFor(name)]?.alias || name;
 }
 
 function getFieldFilter(name) {
-  return !!state.fieldSettings[name]?.filter;
+  return !!state.fieldSettings[settingsKeyFor(name)]?.filter;
 }
 
 function getFieldFormat(name) {
-  return state.fieldSettings[name]?.format || DEFAULT_FORMAT;
+  return state.fieldSettings[settingsKeyFor(name)]?.format || DEFAULT_FORMAT;
 }
 
 /** Renders a numeric value per a field's format config. `type: 'default'` just uses a fixed
@@ -400,6 +469,7 @@ function openConfigureDialog() {
     hierarchyFieldNames: state.hierarchyFieldNames,
     measureFieldNames: state.measureFieldNames,
     detailFieldNames: state.detailFieldNames,
+    settingsKeyByName: state.settingsKeyByName,
     buildVersion: BUILD_VERSION,
     settingsFingerprint: state.settingsFingerprint,
     showDebugInfo: state.showDebugInfo,
@@ -696,7 +766,8 @@ const showAllColumnsItem = {
   label: 'Show all columns',
   action: () => {
     [...state.measureFieldNames, ...state.detailFieldNames].forEach((name) => {
-      if (state.fieldSettings[name]) state.fieldSettings[name].visible = true;
+      const key = settingsKeyFor(name);
+      if (state.fieldSettings[key]) state.fieldSettings[key].visible = true;
     });
     persistSettings();
     rebuildTable();
@@ -712,9 +783,9 @@ const valueColumnContextMenu = [
   {
     label: 'Hide column',
     action: (e, column) => {
-      const name = column.getField();
-      if (!state.fieldSettings[name]) return;
-      state.fieldSettings[name].visible = false;
+      const key = settingsKeyFor(column.getField());
+      if (!state.fieldSettings[key]) return;
+      state.fieldSettings[key].visible = false;
       persistSettings();
       rebuildTable();
     },
@@ -732,16 +803,19 @@ function rebuildTable() {
   // Measures and details are merged into ONE ordered/visibility list — they share the same
   // `order`/`visible` settings (see ensureFieldSettingsDefaults) so a drag-reorder in the grid
   // can freely intermix them, rather than always grouping all details before all measures.
-  const buildFieldConfig = (name, kind) => ({
-    name,
-    kind,
-    alias: getFieldAlias(name),
-    filter: getFieldFilter(name),
-    format: getFieldFormat(name),
-    visible: state.fieldSettings[name]?.visible !== false,
-    order: state.fieldSettings[name]?.order ?? 0,
-    width: state.fieldSettings[name]?.width,
-  });
+  const buildFieldConfig = (name, kind) => {
+    const s = state.fieldSettings[settingsKeyFor(name)];
+    return {
+      name,
+      kind,
+      alias: getFieldAlias(name),
+      filter: getFieldFilter(name),
+      format: getFieldFormat(name),
+      visible: s?.visible !== false,
+      order: s?.order ?? 0,
+      width: s?.width,
+    };
+  };
   const valueFields = [
     ...state.measureFieldNames.map((name) => buildFieldConfig(name, 'measure')),
     ...state.detailFieldNames.map((name) => buildFieldConfig(name, 'detail')),
@@ -837,10 +911,10 @@ function rebuildTable() {
   // uses, so it survives the next rebuild instead of reverting.
   state.table.on('columnMoved', () => {
     state.table.getColumns().filter((c) => c.getField() !== '_label').forEach((col, i) => {
-      const name = col.getField();
-      if (state.fieldSettings[name]) {
-        state.fieldSettings[name].order = i;
-        state.fieldSettings[name].orderManuallySet = true;
+      const key = settingsKeyFor(col.getField());
+      if (state.fieldSettings[key]) {
+        state.fieldSettings[key].order = i;
+        state.fieldSettings[key].orderManuallySet = true;
       }
     });
     persistSettings();
@@ -851,8 +925,12 @@ function rebuildTable() {
   state.table.on('columnResized', (column) => {
     const field = column.getField();
     const width = column.getWidth();
-    if (field === '_label') state.groupColumnWidth = width;
-    else if (state.fieldSettings[field]) state.fieldSettings[field].width = width;
+    if (field === '_label') {
+      state.groupColumnWidth = width;
+    } else {
+      const key = settingsKeyFor(field);
+      if (state.fieldSettings[key]) state.fieldSettings[key].width = width;
+    }
     persistSettings();
   });
 
@@ -900,8 +978,9 @@ function attachHeaderRenameHandlers() {
 
       if (field === '_label') {
         state.groupColumnTitle = next.trim();
-      } else if (state.fieldSettings[field]) {
-        state.fieldSettings[field].alias = next.trim();
+      } else {
+        const key = settingsKeyFor(field);
+        if (state.fieldSettings[key]) state.fieldSettings[key].alias = next.trim();
       }
       persistSettings();
       rebuildTable();
