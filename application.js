@@ -24,7 +24,7 @@
 // dialog's payload (see openConfigureDialog below) instead of the dialog carrying its own
 // hand-maintained "Build: vN" string, which is just another place to forget to bump it. Only
 // visible in that dialog ("Build: vN" near the top) — bump this on every deploy.
-const BUILD_VERSION = 'v7';
+const BUILD_VERSION = 'v6';
 
 const SETTINGS_KEY = 'collapsibleGroupingTableConfig';
 
@@ -48,16 +48,10 @@ const DEFAULT_FORMAT = {
 
 const state = {
   worksheet: null,
-  // IDs (Field.id / Column.fieldId), NOT names — see fieldNamesById below for why. A field's
-  // reported NAME (and any "SUM(...)"-style aggregation prefix in it) can change depending on the
-  // viewer's own Tableau language setting; its id never does, so ids are what everything below
-  // keys off of. Only fieldNamesById holds the (locale-dependent) display text, for showing to
-  // THIS viewer — never used as a lookup key into fieldSettings.
-  hierarchyFieldIds: [], // ordered, as dropped on the "hierarchy" shelf
-  measureFieldIds: [],   // as dropped on the "measures" shelf
-  detailFieldIds: [],    // as dropped on the "details" shelf — shown per-record, not grouped
+  hierarchyFieldNames: [], // ordered, as dropped on the "hierarchy" shelf
+  measureFieldNames: [],   // as dropped on the "measures" shelf
+  detailFieldNames: [],    // as dropped on the "details" shelf — shown per-record, not grouped
   valueFieldOrder: [],     // measures+details combined, in Tableau's true Marks card shelf order
-  fieldNamesById: {},      // { [fieldId]: currently-reported display name } — display only, see above
   groupColumnTitle: null,  // custom title for the tree/group column; defaulted on first load
   groupColumnTitleItalic: false,
   groupColumnValuesItalic: false,
@@ -80,7 +74,7 @@ const state = {
   // Fingerprint of whatever tableau.extensions.settings.get() actually returned to THIS viewer —
   // see shortHash's comment. 'none' means no saved settings reached this viewer at all.
   settingsFingerprint: 'none',
-  // { [fieldId]: { alias, filter, visible, order, width, format } } — visible/order/width/
+  // { [fieldName]: { alias, filter, visible, order, width, format } } — visible/order/width/
   // format apply to both measure and detail fields (hierarchy fields collapse into one tree
   // column, whose own width is tracked separately via groupColumnWidth above).
   fieldSettings: {},
@@ -184,12 +178,11 @@ function showEmptyView(errorMessage) {
 
 async function refresh() {
   try {
-    const { hierarchy, measures, details, valueFieldOrder, fieldNamesById } = await getEncodingMap(state.worksheet);
-    state.hierarchyFieldIds = hierarchy;
-    state.measureFieldIds = measures;
-    state.detailFieldIds = details;
+    const { hierarchy, measures, details, valueFieldOrder } = await getEncodingMap(state.worksheet);
+    state.hierarchyFieldNames = hierarchy;
+    state.measureFieldNames = measures;
+    state.detailFieldNames = details;
     state.valueFieldOrder = valueFieldOrder;
-    state.fieldNamesById = fieldNamesById;
 
     // A measure is always required; hierarchy (grouping) and details (ungrouped columns) are
     // each optional, but at least one of the two must be present — otherwise there's nothing
@@ -199,16 +192,12 @@ async function refresh() {
       return;
     }
 
-    const migrated = ensureFieldSettingsDefaults();
+    ensureFieldSettingsDefaults();
     state.lastFlatRows = await getSummaryDataTable(state.worksheet);
 
     rebuildTable();
     applyZoom();
     switchView('table-view');
-    // Writes back the one-time name->id migration (see migrateNameKeyedSettingsToIds) so other
-    // viewers benefit as soon as THIS session loads it once — not only after someone next opens
-    // Format Extension and hits Save.
-    if (migrated) persistSettings();
   } catch (err) {
     showEmptyView(`Failed to load data: ${err}`);
   }
@@ -270,23 +259,18 @@ async function getEncodingMap(worksheet) {
   const measures = [];
   const details = [];
   const valueFieldOrder = [];
-  const fieldNamesById = {};
   marksCard.encodings.forEach((encoding) => {
     if (!encoding.field) return;
-    const id = encoding.field.id;
-    fieldNamesById[id] = encoding.field.name;
-    if (encoding.id === 'hierarchy') hierarchy.push(id);
-    if (encoding.id === 'measures') { measures.push(id); valueFieldOrder.push(id); }
-    if (encoding.id === 'details') { details.push(id); valueFieldOrder.push(id); }
+    if (encoding.id === 'hierarchy') hierarchy.push(encoding.field.name);
+    if (encoding.id === 'measures') { measures.push(encoding.field.name); valueFieldOrder.push(encoding.field.name); }
+    if (encoding.id === 'details') { details.push(encoding.field.name); valueFieldOrder.push(encoding.field.name); }
   });
-  return { hierarchy, measures, details, valueFieldOrder, fieldNamesById };
+  return { hierarchy, measures, details, valueFieldOrder };
 }
 
-/** Reads the worksheet's flat summary data, returning an array of plain `{fieldId: value}` rows
- *  — keyed by the field's stable id (see the state object's comment), NOT col.fieldName, which
- *  can read as "SUM(...)" in English for one viewer and "SUMA(...)" for another. Uses the classic
- *  (non-paginated) API rather than getSummaryDataReaderAsync — the latter's row-count metadata
- *  triggers a protocol mismatch on some Tableau Desktop versions. */
+/** Reads the worksheet's flat summary data, returning an array of plain `{fieldName: value}`
+ *  rows. Uses the classic (non-paginated) API rather than getSummaryDataReaderAsync — the
+ *  latter's row-count metadata triggers a protocol mismatch on some Tableau Desktop versions. */
 async function getSummaryDataTable(worksheet) {
   const summary = await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: 0 });
   return summary.data.map((row) => {
@@ -296,7 +280,7 @@ async function getSummaryDataTable(worksheet) {
       const isNumeric = col.dataType === 'int' || col.dataType === 'float';
       // Preserve null/undefined as-is (rather than coercing to 0) so leaf-level cells can
       // still show a configurable null placeholder; aggregation elsewhere treats null as 0.
-      obj[col.fieldId] = isNumeric
+      obj[col.fieldName] = isNumeric
         ? (cell.value === null || cell.value === undefined ? null : Number(cell.value))
         : cell.formattedValue;
     });
@@ -304,35 +288,10 @@ async function getSummaryDataTable(worksheet) {
   });
 }
 
-/** One-time upgrade path: settings saved before the id-based keying (see the state object's
- *  comment) were keyed by field NAME — which is exactly what broke aliases/formats for viewers
- *  on a different Tableau language than whoever configured it. For each field currently on a
- *  shelf, if there's no id-keyed entry yet but there IS an old name-keyed one under this viewer's
- *  own (locale-dependent) name for it, carry it over to the id key. This only actually finds
- *  anything on a viewer whose current field names happen to match the locale the settings were
- *  originally saved under (typically whoever configured it) — that's fine: refresh() persists the
- *  result immediately after, so it only has to happen once, ever, for every other viewer to
- *  benefit regardless of their own language. Returns whether anything was migrated. */
-function migrateNameKeyedSettingsToIds() {
-  let migrated = false;
-  [...state.hierarchyFieldIds, ...state.valueFieldOrder].forEach((id) => {
-    if (state.fieldSettings[id]) return;
-    const name = state.fieldNamesById[id];
-    if (name && state.fieldSettings[name]) {
-      state.fieldSettings[id] = state.fieldSettings[name];
-      delete state.fieldSettings[name];
-      migrated = true;
-    }
-  });
-  return migrated;
-}
-
 function ensureFieldSettingsDefaults() {
-  const migrated = migrateNameKeyedSettingsToIds();
-
-  state.hierarchyFieldIds.forEach((id) => {
-    if (!state.fieldSettings[id]) {
-      state.fieldSettings[id] = { alias: state.fieldNamesById[id] || id, filter: true };
+  state.hierarchyFieldNames.forEach((name) => {
+    if (!state.fieldSettings[name]) {
+      state.fieldSettings[name] = { alias: name, filter: true };
     }
   });
 
@@ -345,10 +304,10 @@ function ensureFieldSettingsDefaults() {
   // Only an actual drag-reorder (in the grid or the dialog's order list) flips a field to
   // `orderManuallySet`, freezing its position from then on. state.valueFieldOrder is measures+
   // details in Tableau's REAL reported shelf order (see getEncodingMap), not an assumed one.
-  state.valueFieldOrder.forEach((id, i) => {
-    if (!state.fieldSettings[id]) {
-      state.fieldSettings[id] = {
-        alias: state.fieldNamesById[id] || id,
+  state.valueFieldOrder.forEach((name, i) => {
+    if (!state.fieldSettings[name]) {
+      state.fieldSettings[name] = {
+        alias: name,
         filter: true,
         visible: true,
         order: i,
@@ -357,7 +316,7 @@ function ensureFieldSettingsDefaults() {
       };
     } else {
       // Backfill fields added after settings were first saved, so older saved configs upgrade cleanly.
-      const s = state.fieldSettings[id];
+      const s = state.fieldSettings[name];
       if (s.visible === undefined) s.visible = true;
       if (s.orderManuallySet === undefined) s.orderManuallySet = false;
       if (!s.orderManuallySet) s.order = i;
@@ -372,23 +331,21 @@ function ensureFieldSettingsDefaults() {
     }
   });
 
-  if (!state.groupColumnTitle && state.hierarchyFieldIds.length > 0) {
-    state.groupColumnTitle = getFieldAlias(state.hierarchyFieldIds[0]);
+  if (!state.groupColumnTitle && state.hierarchyFieldNames.length > 0) {
+    state.groupColumnTitle = getFieldAlias(state.hierarchyFieldNames[0]);
   }
-
-  return migrated;
 }
 
-function getFieldAlias(id) {
-  return state.fieldSettings[id]?.alias || state.fieldNamesById[id] || id;
+function getFieldAlias(name) {
+  return state.fieldSettings[name]?.alias || name;
 }
 
-function getFieldFilter(id) {
-  return !!state.fieldSettings[id]?.filter;
+function getFieldFilter(name) {
+  return !!state.fieldSettings[name]?.filter;
 }
 
-function getFieldFormat(id) {
-  return state.fieldSettings[id]?.format || DEFAULT_FORMAT;
+function getFieldFormat(name) {
+  return state.fieldSettings[name]?.format || DEFAULT_FORMAT;
 }
 
 /** Renders a numeric value per a field's format config. `type: 'default'` just uses a fixed
@@ -440,13 +397,9 @@ function openConfigureDialog() {
     defaultSortField: state.defaultSortField,
     defaultSortDir: state.defaultSortDir,
     filtersAlwaysVisible: state.filtersAlwaysVisible,
-    // Despite the names, these are field IDs now (stable keys) — fieldDisplayNames is what the
-    // dialog uses to actually show a human-readable name for each one, since `name` itself can
-    // read differently depending on this viewer's own Tableau language (see the state comment).
-    hierarchyFieldNames: state.hierarchyFieldIds,
-    measureFieldNames: state.measureFieldIds,
-    detailFieldNames: state.detailFieldIds,
-    fieldDisplayNames: state.fieldNamesById,
+    hierarchyFieldNames: state.hierarchyFieldNames,
+    measureFieldNames: state.measureFieldNames,
+    detailFieldNames: state.detailFieldNames,
     buildVersion: BUILD_VERSION,
     settingsFingerprint: state.settingsFingerprint,
     showDebugInfo: state.showDebugInfo,
@@ -490,7 +443,7 @@ function openConfigureDialog() {
 function aggregateMeasures(rows, measureFields) {
   const totals = {};
   measureFields.forEach((m) => {
-    totals[m.id] = rows.reduce((sum, r) => sum + (Number(r[m.id]) || 0), 0);
+    totals[m.name] = rows.reduce((sum, r) => sum + (Number(r[m.name]) || 0), 0);
   });
   return totals;
 }
@@ -517,7 +470,7 @@ function buildTree(rows, hierarchyFields, measureFields, totalsCfg, depth = 0) {
   const isLastLevel = depth === hierarchyFields.length - 1;
   const groups = new Map();
   rows.forEach((r) => {
-    const key = r[field.id] === undefined || r[field.id] === '' ? '(blank)' : r[field.id];
+    const key = r[field.name] === undefined || r[field.name] === '' ? '(blank)' : r[field.name];
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
   });
@@ -696,7 +649,7 @@ function buildColumnDefs(hierarchyFields, valueFields, groupColumnTitle, groupCo
   // sort type/alignment and in how buildTree populates their value.
   const valueColumns = valueFields.map((m) => ({
     title: m.format.titleItalic ? `<i>${m.alias}</i>` : m.alias,
-    field: m.id,
+    field: m.name,
     sorter: m.kind === 'measure' ? 'number' : 'string',
     hozAlign: m.kind === 'measure' ? 'right' : 'left',
     resizable: true,
@@ -742,8 +695,8 @@ const baseColumnContextMenu = [
 const showAllColumnsItem = {
   label: 'Show all columns',
   action: () => {
-    [...state.measureFieldIds, ...state.detailFieldIds].forEach((id) => {
-      if (state.fieldSettings[id]) state.fieldSettings[id].visible = true;
+    [...state.measureFieldNames, ...state.detailFieldNames].forEach((name) => {
+      if (state.fieldSettings[name]) state.fieldSettings[name].visible = true;
     });
     persistSettings();
     rebuildTable();
@@ -759,9 +712,9 @@ const valueColumnContextMenu = [
   {
     label: 'Hide column',
     action: (e, column) => {
-      const id = column.getField();
-      if (!state.fieldSettings[id]) return;
-      state.fieldSettings[id].visible = false;
+      const name = column.getField();
+      if (!state.fieldSettings[name]) return;
+      state.fieldSettings[name].visible = false;
       persistSettings();
       rebuildTable();
     },
@@ -774,24 +727,24 @@ const valueColumnContextMenu = [
 // ============================================================================
 
 function rebuildTable() {
-  const hierarchyFields = state.hierarchyFieldIds.map((id) => ({ id, alias: getFieldAlias(id), filter: getFieldFilter(id) }));
+  const hierarchyFields = state.hierarchyFieldNames.map((name) => ({ name, alias: getFieldAlias(name), filter: getFieldFilter(name) }));
 
   // Measures and details are merged into ONE ordered/visibility list — they share the same
   // `order`/`visible` settings (see ensureFieldSettingsDefaults) so a drag-reorder in the grid
   // can freely intermix them, rather than always grouping all details before all measures.
-  const buildFieldConfig = (id, kind) => ({
-    id,
+  const buildFieldConfig = (name, kind) => ({
+    name,
     kind,
-    alias: getFieldAlias(id),
-    filter: getFieldFilter(id),
-    format: getFieldFormat(id),
-    visible: state.fieldSettings[id]?.visible !== false,
-    order: state.fieldSettings[id]?.order ?? 0,
-    width: state.fieldSettings[id]?.width,
+    alias: getFieldAlias(name),
+    filter: getFieldFilter(name),
+    format: getFieldFormat(name),
+    visible: state.fieldSettings[name]?.visible !== false,
+    order: state.fieldSettings[name]?.order ?? 0,
+    width: state.fieldSettings[name]?.width,
   });
   const valueFields = [
-    ...state.measureFieldIds.map((id) => buildFieldConfig(id, 'measure')),
-    ...state.detailFieldIds.map((id) => buildFieldConfig(id, 'detail')),
+    ...state.measureFieldNames.map((name) => buildFieldConfig(name, 'measure')),
+    ...state.detailFieldNames.map((name) => buildFieldConfig(name, 'detail')),
   ]
     .filter((f) => f.visible)
     .sort((a, b) => a.order - b.order);
@@ -828,11 +781,11 @@ function rebuildTable() {
   // (e.g. the field was removed from its shelf).
   const sortableFieldNames = new Set([
     ...(showTreeColumn ? ['_label'] : []),
-    ...valueFields.map((f) => f.id),
+    ...valueFields.map((f) => f.name),
   ]);
   const sortField = sortableFieldNames.has(state.defaultSortField)
     ? state.defaultSortField
-    : (showTreeColumn ? '_label' : valueFields[0]?.id);
+    : (showTreeColumn ? '_label' : valueFields[0]?.name);
   // Sorted here in plain JS, and re-run through this exact same function on every subsequent
   // interactive header-click sort too (see handleInteractiveSort) — a single trusted sorting code
   // path, rather than letting Tabulator's own sort run and trying to patch up its result after.
@@ -884,10 +837,10 @@ function rebuildTable() {
   // uses, so it survives the next rebuild instead of reverting.
   state.table.on('columnMoved', () => {
     state.table.getColumns().filter((c) => c.getField() !== '_label').forEach((col, i) => {
-      const id = col.getField();
-      if (state.fieldSettings[id]) {
-        state.fieldSettings[id].order = i;
-        state.fieldSettings[id].orderManuallySet = true;
+      const name = col.getField();
+      if (state.fieldSettings[name]) {
+        state.fieldSettings[name].order = i;
+        state.fieldSettings[name].orderManuallySet = true;
       }
     });
     persistSettings();

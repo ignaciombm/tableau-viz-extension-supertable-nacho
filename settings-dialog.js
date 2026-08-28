@@ -58,12 +58,10 @@ function renderSortOptions() {
     opt.textContent = payload.groupColumnTitle || 'Group';
     select.appendChild(opt);
   }
-  // payload.measureFieldNames/detailFieldNames hold field IDs (stable keys) despite the name —
-  // fieldDisplayNames resolves each to the text actually worth showing a person.
-  [...payload.measureFieldNames, ...(payload.detailFieldNames || [])].forEach((id) => {
+  [...payload.measureFieldNames, ...(payload.detailFieldNames || [])].forEach((name) => {
     const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = payload.fieldSettings[id]?.alias || payload.fieldDisplayNames[id] || id;
+    opt.value = name;
+    opt.textContent = payload.fieldSettings[name]?.alias || name;
     select.appendChild(opt);
   });
 
@@ -88,28 +86,25 @@ function renderFieldRows() {
   const tbody = document.getElementById('field-config-rows');
   tbody.innerHTML = '';
 
-  // hierarchyFieldNames/measureFieldNames/detailFieldNames hold field IDs despite the name (see
-  // application.js's openConfigureDialog) — fieldDisplayNames resolves each to actual text.
   const rows = [
-    ...payload.hierarchyFieldNames.map((id) => ({ id, role: 'Hierarchy' })),
-    ...payload.measureFieldNames.map((id) => ({ id, role: 'Measure' })),
-    ...(payload.detailFieldNames || []).map((id) => ({ id, role: 'Detail' })),
+    ...payload.hierarchyFieldNames.map((name) => ({ name, role: 'Hierarchy' })),
+    ...payload.measureFieldNames.map((name) => ({ name, role: 'Measure' })),
+    ...(payload.detailFieldNames || []).map((name) => ({ name, role: 'Detail' })),
   ];
 
-  rows.forEach(({ id, role }) => {
-    const displayName = payload.fieldDisplayNames[id] || id;
-    const setting = payload.fieldSettings[id] || { alias: displayName, filter: true };
+  rows.forEach(({ name, role }) => {
+    const setting = payload.fieldSettings[name] || { alias: name, filter: true };
     const tr = document.createElement('tr');
     tr.className = 'border-b';
-    const formatCell = role !== 'Hierarchy' ? formatControlsHtml(id, setting.format) : '<span class="text-gray-500">—</span>';
+    const formatCell = role !== 'Hierarchy' ? formatControlsHtml(name, setting.format) : '<span class="text-gray-500">—</span>';
     tr.innerHTML = `
-      <td class="py-1 pr-2">${displayName}</td>
+      <td class="py-1 pr-2">${name}</td>
       <td class="py-1 pr-2 text-gray-500">${role}</td>
       <td class="py-1 pr-2">
-        <input class="alias-input border rounded px-1 py-0.5 w-full" data-field="${id}" value="${setting.alias}" />
+        <input class="alias-input border rounded px-1 py-0.5 w-full" data-field="${name}" value="${setting.alias}" />
       </td>
       <td class="py-1 pr-2 text-center">
-        <input type="checkbox" class="filter-checkbox" data-field="${id}" ${setting.filter ? 'checked' : ''} />
+        <input type="checkbox" class="filter-checkbox" data-field="${name}" ${setting.filter ? 'checked' : ''} />
       </td>
       <td class="py-1 pr-2">${formatCell}</td>
     `;
@@ -154,9 +149,9 @@ function formatControlsHtml(name, format) {
   `;
 }
 
-function ensureSetting(id) {
-  if (!payload.fieldSettings[id]) payload.fieldSettings[id] = { alias: payload.fieldDisplayNames[id] || id, filter: true };
-  return payload.fieldSettings[id];
+function ensureSetting(name) {
+  if (!payload.fieldSettings[name]) payload.fieldSettings[name] = { alias: name, filter: true };
+  return payload.fieldSettings[name];
 }
 
 function ensureFormat(name) {
@@ -179,20 +174,19 @@ function renderOrderList() {
     return oa - ob;
   });
 
-  ordered.forEach((id) => {
-    const setting = payload.fieldSettings[id] || {};
-    const displayName = setting.alias || payload.fieldDisplayNames[id] || id;
+  ordered.forEach((name) => {
+    const setting = payload.fieldSettings[name] || {};
     const isHidden = setting.visible === false;
     const chip = document.createElement('div');
     chip.className = 'order-chip';
     chip.draggable = true;
-    chip.dataset.field = id;
+    chip.dataset.field = name;
     chip.innerHTML = `
       <span class="handle">⋮⋮</span>
       <label class="flex items-center gap-1">
-        <input type="checkbox" class="visible-checkbox" data-field="${id}" ${isHidden ? '' : 'checked'} />
+        <input type="checkbox" class="visible-checkbox" data-field="${name}" ${isHidden ? '' : 'checked'} />
       </label>
-      <span class="name" style="${isHidden ? 'color:#9a9ca3; font-style:italic;' : ''}">${displayName}${isHidden ? ' (hidden — check to restore)' : ''}</span>
+      <span class="name" style="${isHidden ? 'color:#9a9ca3; font-style:italic;' : ''}">${setting.alias || name}${isHidden ? ' (hidden — check to restore)' : ''}</span>
     `;
     container.appendChild(chip);
   });
